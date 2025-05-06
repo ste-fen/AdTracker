@@ -44,6 +44,11 @@ def update_sheet(results):
         sheet.update_cell(i, 2, str(result))  # Write results in column B
 
 def write_tiktok_results_to_sheet(results, search_term):
+    # Check if results is None or empty
+    if not results:
+        print(f"No results to write for search term '{search_term}'.")
+        return
+
     """Write TikTok ad results to a Google Sheet."""
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
 
@@ -108,6 +113,11 @@ def write_tiktok_results_to_sheet(results, search_term):
         sheet.append_row(row)
 
 def write_meta_results_to_sheet(results, search_term):
+    # Check if results is None or empty
+    if not results:
+        print(f"No results to write for search term '{search_term}'.")
+        return
+    
     """Write Meta ad results to a Google Sheet with batching to avoid quota limits."""
     # Open the sheet named "Results_Meta"
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
@@ -116,21 +126,43 @@ def write_meta_results_to_sheet(results, search_term):
     try:
         sheet = spreadsheet.worksheet("Results_Meta")
     except gspread.exceptions.WorksheetNotFound:
-        sheet = spreadsheet.add_worksheet(title="Results_Meta", rows="1000", cols="26")
+        sheet = spreadsheet.add_worksheet(title="Results_Meta", rows="1000", cols="50")
         # Write headers only if the sheet is newly created
         headers = [
-            "Timestamp", "Search Term", "Ad ID", "Ad Creation Time", "Ad Creative Bodies", "Ad Creative Link Captions",
-            "Ad Creative Link Descriptions", "Ad Creative Link Titles", "Ad Delivery Start Time",
-            "Ad Delivery Stop Time", "Ad Snapshot URL", "Age-Country-Gender Reach Breakdown",
-            "Beneficiary Payers", "Currency", "Delivery by Region", "Demographic Distribution",
-            "Estimated Audience Size", "EU Total Reach", "Impressions", "Page ID", "Page Name",
-            "Publisher Platforms", "Spend", "Target Ages", "Target Gender", "Target Locations"
+            "Timestamp", "Search Term", "Ad ID", "Ad Creation Time", "Ad Creative Bodies",
+            "Ad Creative Link Captions", "Ad Creative Link Descriptions", "Ad Creative Link Titles",
+            "Ad Delivery Start Time", "Ad Delivery Stop Time", "Ad Snapshot URL", "Currency",
+            "Delivery by Region", "Demographic Distribution", "Estimated Audience Size",
+            "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms",
+            "Spend", "Target Ages", "Target Gender", "Target Locations"
         ]
         sheet.append_row(headers)
 
     # Prepare rows for batch writing
     rows = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Collect all unique age_range and gender combinations for dynamic columns
+    dynamic_columns = set()
+    for result in results:
+        for breakdown in result.get("age_country_gender_reach_breakdown", []):
+            country = breakdown.get("country", "")
+            for age_gender in breakdown.get("age_gender_breakdowns", []):
+                age_range = age_gender.get("age_range", "")
+                dynamic_columns.add(f"{country} - {age_range} - Male")
+                dynamic_columns.add(f"{country} - {age_range} - Female")
+                dynamic_columns.add(f"{country} - {age_range} - Unknown")
+
+    # Sort dynamic columns for consistent order
+    dynamic_columns = sorted(dynamic_columns)
+
+    # Add dynamic columns to the sheet headers if they don't already exist
+    existing_headers = sheet.row_values(1)
+    new_headers = existing_headers + [col for col in dynamic_columns if col not in existing_headers]
+    if len(new_headers) > len(existing_headers):
+        sheet.delete_rows(1)  # Remove the old header row
+        sheet.insert_row(new_headers, index=1)  # Insert the updated header row
+
     for result in results:
         # Extract fields from the result
         ad_id = result.get("id", "")
@@ -142,108 +174,65 @@ def write_meta_results_to_sheet(results, search_term):
         ad_delivery_start_time = result.get("ad_delivery_start_time", "")
         ad_delivery_stop_time = result.get("ad_delivery_stop_time", "")
         ad_snapshot_url = result.get("ad_snapshot_url", "")
-
-        # Process age-country-gender reach breakdown
-        age_country_gender_reach = []
-        for breakdown in result.get("age_country_gender_reach_breakdown", []):
-            country = breakdown.get("country", "")
-            age_gender_breakdowns = breakdown.get("age_gender_breakdowns", [])
-            for age_gender in age_gender_breakdowns:
-                age_range = age_gender.get("age_range", "")
-                male = age_gender.get("male", 0)
-                female = age_gender.get("female", 0)
-                unknown = age_gender.get("unknown", 0)
-                age_country_gender_reach.append(
-                    f"{country} - {age_range}: Male={male}, Female={female}, Unknown={unknown}"
-                )
-        age_country_gender_reach_str = "\n".join(age_country_gender_reach)
-
-        # Process beneficiary payers
-        beneficiary_payers = []
-        for payer in result.get("beneficiary_payers", []):
-            beneficiary_payers.append(
-                f"Payer: {payer.get('payer', '')}, Beneficiary: {payer.get('beneficiary', '')}, Current: {payer.get('current', '')}"
-            )
-        beneficiary_payers_str = "\n".join(beneficiary_payers)
-
-        # Process delivery by region
-        delivery_by_region = []
-        for region in result.get("delivery_by_region", []):
-            delivery_by_region.append(
-                f"{region.get('region', '')}: {region.get('percentage', '')}"
-            )
-        delivery_by_region_str = "\n".join(delivery_by_region)
-
-        # Process demographic distribution
-        demographic_distribution = []
-        for demographic in result.get("demographic_distribution", []):
-            demographic_distribution.append(
-                f"Age: {demographic.get('age', '')}, Gender: {demographic.get('gender', '')}, Percentage: {demographic.get('percentage', '')}"
-            )
-        demographic_distribution_str = "\n".join(demographic_distribution)
-
-        # Process estimated audience size
+        currency = result.get("currency", "")
+        delivery_by_region = "\n".join(
+            [f"{region.get('region', '')}: {region.get('percentage', '')}" for region in result.get("delivery_by_region", [])]
+        )
+        demographic_distribution = "\n".join(
+            [f"Age: {demo.get('age', '')}, Gender: {demo.get('gender', '')}, Percentage: {demo.get('percentage', '')}" for demo in result.get("demographic_distribution", [])]
+        )
         estimated_audience_size = result.get("estimated_audience_size", {})
         estimated_audience_size_str = f"{estimated_audience_size.get('lower_bound', '')} - {estimated_audience_size.get('upper_bound', '')}"
-
-        # Process impressions
         impressions = result.get("impressions", {})
         impressions_str = f"{impressions.get('lower_bound', '')} - {impressions.get('upper_bound', '')}"
-
-        # Process spend
-        spend = result.get("spend", {})
-        spend_str = f"{spend.get('lower_bound', '')} - {spend.get('upper_bound', '')}"
-
         eu_total_reach = result.get("eu_total_reach", "")
         page_id = result.get("page_id", "")
         page_name = result.get("page_name", "")
         publisher_platforms = ", ".join(result.get("publisher_platforms", []))
+        spend = result.get("spend", {})
+        spend_str = f"{spend.get('lower_bound', '')} - {spend.get('upper_bound', '')}"
         target_ages = "-".join(result.get("target_ages", []))
         target_gender = result.get("target_gender", "")
+        target_locations = "\n".join(
+            [f"{loc.get('name', '')} (Excluded: {loc.get('excluded', False)})" for loc in result.get("target_locations", [])]
+        )
 
-        # Process target locations
-        target_locations = []
-        for location in result.get("target_locations", []):
-            target_locations.append(
-                f"{location.get('name', '')} (Excluded: {location.get('excluded', False)})"
-            )
-        target_locations_str = "\n".join(target_locations)
-
-        # Prepare the row
+        # Prepare the base row
         row = [
-            timestamp,  # Timestamp
-            search_term,  # Search Term
-            ad_id,
-            ad_creation_time,
-            ad_creative_bodies,
-            ad_creative_link_captions,
-            ad_creative_link_descriptions,
-            ad_creative_link_titles,
-            ad_delivery_start_time,
-            ad_delivery_stop_time,
-            ad_snapshot_url,
-            age_country_gender_reach_str,
-            beneficiary_payers_str,
-            result.get("currency", ""),
-            delivery_by_region_str,
-            demographic_distribution_str,
-            estimated_audience_size_str,
-            eu_total_reach,
-            impressions_str,
-            page_id,
-            page_name,
-            publisher_platforms,
-            spend_str,
-            target_ages,
-            target_gender,
-            target_locations_str,
+            timestamp, search_term, ad_id, ad_creation_time, ad_creative_bodies,
+            ad_creative_link_captions, ad_creative_link_descriptions, ad_creative_link_titles,
+            ad_delivery_start_time, ad_delivery_stop_time, ad_snapshot_url, currency,
+            delivery_by_region, demographic_distribution, estimated_audience_size_str,
+            eu_total_reach, impressions_str, page_id, page_name, publisher_platforms,
+            spend_str, target_ages, target_gender, target_locations
         ]
+
+        # Add dynamic columns for age_range and gender combinations
+        dynamic_values = {col: 0 for col in dynamic_columns}
+        for breakdown in result.get("age_country_gender_reach_breakdown", []):
+            country = breakdown.get("country", "")
+            for age_gender in breakdown.get("age_gender_breakdowns", []):
+                age_range = age_gender.get("age_range", "")
+                male = age_gender.get("male", 0)
+                female = age_gender.get("female", 0)
+                unknown = age_gender.get("unknown", 0)
+                dynamic_values[f"{country} - {age_range} - Male"] += male
+                dynamic_values[f"{country} - {age_range} - Female"] += female
+                dynamic_values[f"{country} - {age_range} - Unknown"] += unknown
+
+        # Append dynamic values to the row
+        row.extend([dynamic_values[col] for col in dynamic_columns])
         rows.append(row)
 
     # Batch write rows to the sheet
     sheet.append_rows(rows, value_input_option="RAW")
 
 def write_google_results_to_sheet(results, search_term):
+    # Check if results is None or empty
+    if not results:
+        print(f"No results to write for search term '{search_term}'.")
+        return
+    
     """Write Google Ads Transparency Center results to a Google Sheet."""
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
 

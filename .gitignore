@@ -1,4 +1,4 @@
 /.env
-/adscrawler-393109-48c7ab52dd13.json
-/service-account.json
+*.json
 /venv
+/src/__pycache__
