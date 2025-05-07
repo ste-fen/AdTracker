@@ -147,11 +147,12 @@ def write_meta_results_to_sheet(results, search_term):
     for result in results:
         for breakdown in result.get("age_country_gender_reach_breakdown", []):
             country = breakdown.get("country", "")
-            for age_gender in breakdown.get("age_gender_breakdowns", []):
-                age_range = age_gender.get("age_range", "")
-                dynamic_columns.add(f"{country} - {age_range} - Male")
-                dynamic_columns.add(f"{country} - {age_range} - Female")
-                dynamic_columns.add(f"{country} - {age_range} - Unknown")
+            if country == "AT": # Remove or adapt to see non-AT countries
+                for age_gender in breakdown.get("age_gender_breakdowns", []):
+                    age_range = age_gender.get("age_range", "")
+                    dynamic_columns.add(f"{country} - {age_range} - Male")
+                    dynamic_columns.add(f"{country} - {age_range} - Female")
+                    dynamic_columns.add(f"{country} - {age_range} - Unknown")
 
     # Sort dynamic columns for consistent order
     dynamic_columns = sorted(dynamic_columns)
@@ -167,10 +168,18 @@ def write_meta_results_to_sheet(results, search_term):
         # Extract fields from the result
         ad_id = result.get("id", "")
         ad_creation_time = result.get("ad_creation_time", "")
-        ad_creative_bodies = "\n".join(result.get("ad_creative_bodies", []))
-        ad_creative_link_captions = "\n".join(result.get("ad_creative_link_captions", []))
-        ad_creative_link_descriptions = "\n".join(result.get("ad_creative_link_descriptions", []))
-        ad_creative_link_titles = "\n".join(result.get("ad_creative_link_titles", []))
+
+        # Usually Meta returns lists for these fields, but we only need the first entry
+        ad_creative_bodies = result.get("ad_creative_bodies", [None])[0]  # Use the first entry or None if the list is empty
+        ad_creative_link_captions = result.get("ad_creative_link_captions", [None])[0]  # Use the first entry or None
+        ad_creative_link_descriptions = result.get("ad_creative_link_descriptions", [None])[0]  # Use the first entry or None
+        ad_creative_link_titles = result.get("ad_creative_link_titles", [None])[0]  # Use the first entry or None
+        # If you want to join all entries, uncomment the following lines:
+        # ad_creative_bodies = "\n".join(result.get("ad_creative_bodies", []))
+        # ad_creative_link_captions = "\n".join(result.get("ad_creative_link_captions", []))
+        # ad_creative_link_descriptions = "\n".join(result.get("ad_creative_link_descriptions", []))
+        # ad_creative_link_titles = "\n".join(result.get("ad_creative_link_titles", []))
+
         ad_delivery_start_time = result.get("ad_delivery_start_time", "")
         ad_delivery_stop_time = result.get("ad_delivery_stop_time", "")
         ad_snapshot_url = result.get("ad_snapshot_url", "")
@@ -211,14 +220,15 @@ def write_meta_results_to_sheet(results, search_term):
         dynamic_values = {col: 0 for col in dynamic_columns}
         for breakdown in result.get("age_country_gender_reach_breakdown", []):
             country = breakdown.get("country", "")
-            for age_gender in breakdown.get("age_gender_breakdowns", []):
-                age_range = age_gender.get("age_range", "")
-                male = age_gender.get("male", 0)
-                female = age_gender.get("female", 0)
-                unknown = age_gender.get("unknown", 0)
-                dynamic_values[f"{country} - {age_range} - Male"] += male
-                dynamic_values[f"{country} - {age_range} - Female"] += female
-                dynamic_values[f"{country} - {age_range} - Unknown"] += unknown
+            if country == "AT": # Remove or adapt to see non-AT countries
+                for age_gender in breakdown.get("age_gender_breakdowns", []):
+                    age_range = age_gender.get("age_range", "")
+                    male = age_gender.get("male", 0)
+                    female = age_gender.get("female", 0)
+                    unknown = age_gender.get("unknown", 0)
+                    dynamic_values[f"{country} - {age_range} - Male"] += male
+                    dynamic_values[f"{country} - {age_range} - Female"] += female
+                    dynamic_values[f"{country} - {age_range} - Unknown"] += unknown
 
         # Append dynamic values to the row
         row.extend([dynamic_values[col] for col in dynamic_columns])
