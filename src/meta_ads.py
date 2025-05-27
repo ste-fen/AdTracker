@@ -39,7 +39,7 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
     headers = {"Authorization": f"Bearer {token}"}
     params = {
         "search_terms": term,
-        "search_type": "KEYWORD_EXACT_PHRASE",
+        # "search_type": "KEYWORD_EXACT_PHRASE",
         "ad_type": "ALL",
         "ad_active_status": "ALL",
         "ad_reached_countries": ['AT'],  # Replace 'AT' with the desired country code(s)
