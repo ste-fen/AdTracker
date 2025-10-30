@@ -256,35 +256,38 @@ def write_google_results_to_sheet(results, search_term):
             "Timestamp", "Search Term", "Advertiser ID", "Creative ID", "Creative Page URL",
             "Ad Format Type", "Advertiser Disclosed Name", "Advertiser Legal Name",
             "Advertiser Location", "Advertiser Verification Status", "Region Code",
-            "First Shown", "Last Shown", "Other Fields..."
+            "First Shown", "Last Shown", "Times Shown Start Date", "Times Shown End Date",
+            "Times Shown Lower Bound", "Times Shown Upper Bound", "Demographic Info",
+            "Geo Location", "Contextual Signals", "Customer Lists", "Topics of Interest"
         ]
         sheet.append_row(headers)
 
     # Prepare rows for batch writing
     rows = []
+    results_rows = [dict(row) for row in results]
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for result in results:
+    for result in results_rows:
         # Extract fields using integer indices
-        advertiser_id = result[0]
-        creative_id = result[1]
-        creative_page_url = result[2]
-        ad_format_type = result[3]
-        advertiser_disclosed_name = result[4]
-        advertiser_legal_name = result[5]
-        advertiser_location = result[6]
-        advertiser_verification_status = result[7]
-        region_code = result[8]
-        first_shown = result[9]
-        last_shown = result[10]
-        times_shown_start_date = result[14]
-        times_shown_end_date = result[11]
-        times_shown_lower_bound = result[12]
-        times_shown_upper_bound = result[13]
-        demographic_info = result[16]
-        geo_location = result[17]
-        contextual_signals = result[18]
-        customer_lists = result[19]
-        topics_of_interest = result[20]
+        advertiser_id = result.get('advertiser_id')
+        creative_id = result.get('creative_id')
+        creative_page_url = result.get('creative_page_url')
+        ad_format_type = result.get('ad_format_type')
+        advertiser_disclosed_name = result.get('advertiser_disclosed_name')
+        advertiser_legal_name = result.get('advertiser_legal_name')
+        advertiser_location = result.get('advertiser_location')
+        advertiser_verification_status = result.get('advertiser_verification_status')
+        region_code = result.get('region_code')
+        first_shown = result.get('first_shown')
+        last_shown = result.get('last_shown')
+        times_shown_start_date = result.get('times_shown_start_date')
+        times_shown_end_date = result.get('times_shown_end_date')
+        times_shown_lower_bound = result.get('times_shown_lower_bound')
+        times_shown_upper_bound = result.get('times_shown_upper_bound')
+        demographic_info = result.get('demographic_info')
+        geo_location = result.get('geo_location')
+        contextual_signals = result.get('contextual_signals')
+        customer_lists = result.get('customer_lists')
+        topics_of_interest = result.get('topics_of_interest')
 
         # Prepare the row
         row = [
