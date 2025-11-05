@@ -45,7 +45,10 @@ FROM
     `bigquery-public-data.google_ads_transparency_center.creative_stats` AS creative_stats,
     UNNEST(creative_stats.region_stats) AS region_stats
 WHERE 
-    LOWER(creative_stats.advertiser_disclosed_name) LIKE "%{term}%"
+    (
+        LOWER(creative_stats.advertiser_disclosed_name) LIKE "%{term}%" OR
+        LOWER(creative_stats.creative_page_url) LIKE "%{term}%"
+    )
     AND region_stats.region_code = "AT"
     AND DATE(region_stats.first_shown) >= DATE("{min_date}")
     AND DATE(region_stats.last_shown) <= DATE("{max_date}")
