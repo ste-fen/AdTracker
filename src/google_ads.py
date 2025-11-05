@@ -47,7 +47,7 @@ FROM
 WHERE 
     (
         LOWER(creative_stats.advertiser_disclosed_name) LIKE "%{term}%" OR
-        LOWER(creative_stats.creative_page_url) LIKE "%{term}%"
+        LOWER(creative_stats.advertiser_legal_name) LIKE "%{term}%"
     )
     AND region_stats.region_code = "AT"
     AND DATE(region_stats.first_shown) >= DATE("{min_date}")
