@@ -133,7 +133,7 @@ def write_meta_results_to_sheet(results, search_term):
             "Ad Creative Link Captions", "Ad Creative Link Descriptions", "Ad Creative Link Titles",
             "Ad Delivery Start Time", "Ad Delivery Stop Time", "Ad Snapshot URL", "Currency",
             "Delivery by Region", "Demographic Distribution", "Estimated Audience Size",
-            "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms",
+            "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms", "Beneficiary Payers",
             "Spend", "Target Ages", "Target Gender", "Target Locations"
         ]
         sheet.append_row(headers)
@@ -198,6 +198,7 @@ def write_meta_results_to_sheet(results, search_term):
         page_id = result.get("page_id", "")
         page_name = result.get("page_name", "")
         publisher_platforms = ", ".join(result.get("publisher_platforms", []))
+        beneficiary_payers = ", ".join([f"{payer.get('payer', '')}" for payer in result.get("beneficiary_payers", [])])
         spend = result.get("spend", {})
         spend_str = f"{spend.get('lower_bound', '')} - {spend.get('upper_bound', '')}"
         target_ages = "-".join(result.get("target_ages", []))
@@ -212,7 +213,7 @@ def write_meta_results_to_sheet(results, search_term):
             ad_creative_link_captions, ad_creative_link_descriptions, ad_creative_link_titles,
             ad_delivery_start_time, ad_delivery_stop_time, ad_snapshot_url, currency,
             delivery_by_region, demographic_distribution, estimated_audience_size_str,
-            eu_total_reach, impressions_str, page_id, page_name, publisher_platforms,
+            eu_total_reach, impressions_str, page_id, page_name, publisher_platforms, beneficiary_payers,
             spend_str, target_ages, target_gender, target_locations
         ]
 
