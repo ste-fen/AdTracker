@@ -117,6 +117,11 @@ def write_meta_results_to_sheet(results, search_term):
     if not results:
         print(f"No results to write for search term '{search_term}'.")
         return
+
+    # Check if results contain an error response from Meta API
+    if "Meta API error" in results:
+        print(f"Meta API error for search term '{search_term}': {results.get('message')} (Code: {results.get('code')})")
+        return
     
     """Write Meta ad results to a Google Sheet with batching to avoid quota limits."""
     # Open the sheet named "Results_Meta"
