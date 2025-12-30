@@ -57,6 +57,9 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
     all_ads = []  # List to store all ad details
     while url:
         response = requests.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            print(f"Error querying Meta Ads API: {response.status_code} - {response.text}")
+            return all_ads
         data = response.json()
 
         # Check for token errors

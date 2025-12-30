@@ -2,3 +2,4 @@
 *.json
 /venv
 /src/__pycache__
+/.github
