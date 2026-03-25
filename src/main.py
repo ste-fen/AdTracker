@@ -1,8 +1,22 @@
-from google_sheets import read_search_terms, write_tiktok_results_to_sheet, write_meta_results_to_sheet, write_google_results_to_sheet
+from google_sheets import (
+    clear_results_sheets,
+    read_search_terms,
+    write_tiktok_results_to_sheet,
+    write_meta_results_to_sheet,
+    write_google_results_to_sheet,
+)
 from meta_ads import query_meta_ads
 from tiktok_ads import query_tiktok_ads_with_details
 from google_ads import query_google_ad_library
 from datetime import datetime
+
+
+def result_count(results):
+    """Return a robust count for list-like API results."""
+    if isinstance(results, list):
+        return len(results)
+    return 0
+
 
 def parse_date(date_str, output_format=None):
     """Parse a date string in yyyy-mm-dd format and optionally format it."""
@@ -18,6 +32,8 @@ def parse_date(date_str, output_format=None):
         return None
 
 def main():
+    print("Clearing results sheets before crawler start...")
+    clear_results_sheets()
     search_terms = read_search_terms()
 
     for entry in search_terms:
@@ -27,6 +43,9 @@ def main():
         fetch_meta = entry["fetch_meta"]
         fetch_tiktok = entry["fetch_tiktok"]
         fetch_google = entry["fetch_google"]
+        meta_count = 0
+        tiktok_count = 0
+        google_count = 0
 
         # Parse dates consistently
         meta_date_from = parse_date(date_from, "%Y-%m-%d")  # For Meta (yyyy-mm-dd format)
@@ -42,8 +61,12 @@ def main():
                 print(f"Skipping Meta fetch for term '{term}' due to invalid dates.")
                 continue
             meta_results = query_meta_ads(term, delivery_date_min=meta_date_from, delivery_date_max=meta_date_to)
-            print(f"Writing Meta results for term '{term}'...")
-            write_meta_results_to_sheet(meta_results, term)
+            meta_count = result_count(meta_results)
+            print(f"{meta_count} Meta results for term '{term}'")
+            if meta_count > 0:
+                print(f"Writing Meta results for term '{term}'...")
+                write_meta_results_to_sheet(meta_results, term)
+            print("-" * 100)
 
         if fetch_tiktok:
             print(f"Fetching TikTok data for term '{term}' from {tiktok_min_date} to {tiktok_max_date}...")
@@ -51,8 +74,12 @@ def main():
                 print(f"Skipping TikTok fetch for term '{term}' due to invalid dates.")
                 continue
             tiktok_results = query_tiktok_ads_with_details(term, tiktok_min_date, tiktok_max_date)
-            print(f"Writing TikTok results for term '{term}'...")
-            write_tiktok_results_to_sheet(tiktok_results, term)
+            tiktok_count = result_count(tiktok_results)
+            print(f"{tiktok_count} TikTok results for term '{term}'")
+            if tiktok_count > 0:
+                print(f"Writing TikTok results for term '{term}'...")
+                write_tiktok_results_to_sheet(tiktok_results, term)
+            print("-" * 100)
 
         if fetch_google:
             print(f"Fetching Google data for term '{term}' from {google_date_from} to {google_date_to}...")
@@ -60,8 +87,13 @@ def main():
                 print(f"Skipping Google fetch for term '{term}' due to invalid dates.")
                 continue
             google_results = query_google_ad_library(term, google_date_from, google_date_to)
-            print(f"Writing Google results for term '{term}'...")
-            write_google_results_to_sheet(google_results, term)
+            google_count = result_count(google_results)
+            print(f"{google_count} Google results for term '{term}'")
+            if google_count > 0:
+                print(f"Writing Google results for term '{term}'...")
+                write_google_results_to_sheet(google_results, term)
+            print("-" * 100)
+
 
 if __name__ == "__main__":
     main()

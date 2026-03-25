@@ -44,7 +44,7 @@ def query_tiktok_ads(search_term, min_date, max_date):
     """Query TikTok Ads using the Commercial Content API."""
     global TIKTOK_ACCESS_TOKEN
     if is_token_expired():
-        print("Access token expired. Refreshing token...")
+        print("TikTok access token expired. Refreshing token...")
         TIKTOK_ACCESS_TOKEN = get_client_access_token()
         if not TIKTOK_ACCESS_TOKEN:
             print("Failed to refresh access token.")
@@ -127,7 +127,6 @@ def query_tiktok_ads_with_details(search_term, min_date, max_date):
     # Extract ad IDs from the nested structure
     ad_ids = [ad["ad"]["id"] for ad in ads_data["data"]["ads"] if "ad" in ad and "id" in ad["ad"]]
     if not ad_ids:
-        print("No ad IDs found in the response.")
         return None
 
     #print(f"Fetching details for {len(ad_ids)} ads...")

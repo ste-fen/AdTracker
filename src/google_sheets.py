@@ -1,17 +1,119 @@
 from datetime import datetime
+import os
 import gspread
+import google.auth
+import requests
 from google.oauth2.service_account import Credentials
+from gspread.exceptions import APIError
 from config import GOOGLE_SHEET_ID, GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
-creds = Credentials.from_service_account_file(GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-client = gspread.authorize(creds)
+if GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE:
+    creds = Credentials.from_service_account_file(GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    client = gspread.authorize(creds)
+else:
+    # On Cloud Run, prefer ADC from the attached runtime service account.
+    creds, _ = google.auth.default(scopes=SCOPES)
+    client = gspread.authorize(creds)
+RESULT_SHEET_TITLES = ["Results_Meta", "Results_TikTok", "Results_Google"]
+
+
+def _runtime_principal_hint():
+    runtime_service_account = os.getenv("CLOUD_RUN_SERVICE_ACCOUNT")
+    if runtime_service_account:
+        return runtime_service_account
+
+    if os.getenv("K_SERVICE"):
+        try:
+            response = requests.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                headers={"Metadata-Flavor": "Google"},
+                timeout=2,
+            )
+            response.raise_for_status()
+            return response.text.strip()
+        except requests.RequestException:
+            pass
+
+    return "the attached Cloud Run runtime service account"
+
+
+def open_spreadsheet():
+    """Open the configured spreadsheet with a clearer permission error."""
+    try:
+        return client.open_by_key(GOOGLE_SHEET_ID)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Could not open GOOGLE_SHEET_ID ({GOOGLE_SHEET_ID}) in Google Sheets. "
+            f"Verify that {_runtime_principal_hint()} has access to the spreadsheet, "
+            "that the Google Sheets and Google Drive APIs are enabled, and that GOOGLE_SHEET_ID is correct."
+        ) from exc
+
+
+def _free_space_and_retry_append(sheet, rows):
+    """Append rows and recover from the 10M-cell workbook limit by trimming oldest data rows."""
+    if not rows:
+        return
+
+    try:
+        sheet.append_rows(rows, value_input_option="RAW")
+        return
+    except APIError as exc:
+        message = str(exc)
+        if "above the limit of 10000000 cells" not in message:
+            raise
+
+    # Remove enough old rows so re-append does not increase workbook size beyond the limit.
+    used_rows = len(sheet.get_all_values())
+    deletable_rows = max(0, used_rows - 1)  # keep header row
+    rows_to_delete = min(deletable_rows, max(len(rows) * 2, 1000))
+
+    if rows_to_delete <= 0:
+        raise RuntimeError(
+            "Google Sheet reached the 10M cell limit and no data rows can be removed automatically."
+        )
+
+    sheet.delete_rows(2, rows_to_delete + 1)
+    print(
+        f"Workbook near 10M-cell limit. Removed {rows_to_delete} oldest rows from '{sheet.title}' and retrying."
+    )
+
+    # Retry once after cleanup.
+    sheet.append_rows(rows, value_input_option="RAW")
+
+
+def _free_space_and_append_row(sheet, row):
+    """Single-row wrapper that reuses the same limit-handling logic as batch appends."""
+    _free_space_and_retry_append(sheet, [row])
+
+
+def clear_results_sheets():
+    """Clear result worksheets before a run while keeping header rows."""
+    spreadsheet = open_spreadsheet()
+
+    for sheet_title in RESULT_SHEET_TITLES:
+        try:
+            sheet = spreadsheet.worksheet(sheet_title)
+        except gspread.exceptions.WorksheetNotFound:
+            # print(f"Skipping clear: worksheet '{sheet_title}' does not exist yet.")
+            continue
+
+        values = sheet.get_all_values()
+        if len(values) <= 1:
+            # print(f"Worksheet '{sheet_title}' already empty (header only).")
+            continue
+
+        sheet.delete_rows(2, len(values))
+        # print(f"Cleared {len(values) - 1} rows from worksheet '{sheet_title}'.")
 
 def read_search_terms():
     """Read search terms and associated metadata from the Google Sheet."""
     # Open the sheet named "Search_Terms"
-    sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Search terms")
+    sheet = open_spreadsheet().worksheet("Search terms")
 
     # Fetch all rows from the sheet
     rows = sheet.get_all_values()
@@ -39,7 +141,7 @@ def read_search_terms():
     return search_terms
 
 def update_sheet(results):
-    sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+    sheet = open_spreadsheet().sheet1
     for i, result in enumerate(results, start=2):
         sheet.update_cell(i, 2, str(result))  # Write results in column B
 
@@ -50,7 +152,7 @@ def write_tiktok_results_to_sheet(results, search_term):
         return
 
     """Write TikTok ad results to a Google Sheet."""
-    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+    spreadsheet = open_spreadsheet()
 
     # Check if the "Results_TikTok" sheet exists, create it if not
     try:
@@ -64,7 +166,7 @@ def write_tiktok_results_to_sheet(results, search_term):
             "Targeted Countries", "Targeted Interests", "Targeted Gender", "Targeted Age",
             "Number of Users Targeted", "Video URL", "Video Cover Image URL", "Image URL"
         ]
-        sheet.append_row(headers)
+        _free_space_and_append_row(sheet, headers)
 
     # Write each result to the sheet
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -110,7 +212,7 @@ def write_tiktok_results_to_sheet(results, search_term):
             ad.get("videos", [{}])[0].get("cover_image_url", "") if ad.get("videos") else "",
             ad.get("image_urls", [])[0] if ad.get("image_urls") else "",
         ]
-        sheet.append_row(row)
+        _free_space_and_append_row(sheet, row)
 
 def write_meta_results_to_sheet(results, search_term):
     # Check if results is None or empty
@@ -125,7 +227,7 @@ def write_meta_results_to_sheet(results, search_term):
     
     """Write Meta ad results to a Google Sheet with batching to avoid quota limits."""
     # Open the sheet named "Results_Meta"
-    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+    spreadsheet = open_spreadsheet()
 
     # Check if the "Results_Meta" sheet exists, create it if not
     try:
@@ -141,7 +243,7 @@ def write_meta_results_to_sheet(results, search_term):
             "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms", "Beneficiary Payers",
             "Spend", "Target Ages", "Target Gender", "Target Locations"
         ]
-        sheet.append_row(headers)
+        _free_space_and_append_row(sheet, headers)
 
     # Prepare rows for batch writing
     rows = []
@@ -241,7 +343,7 @@ def write_meta_results_to_sheet(results, search_term):
         rows.append(row)
 
     # Batch write rows to the sheet
-    sheet.append_rows(rows, value_input_option="RAW")
+    _free_space_and_retry_append(sheet, rows)
 
 def write_google_results_to_sheet(results, search_term):
     # Check if results is None or empty
@@ -250,7 +352,7 @@ def write_google_results_to_sheet(results, search_term):
         return
     
     """Write Google Ads Transparency Center results to a Google Sheet."""
-    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+    spreadsheet = open_spreadsheet()
 
     # Check if the "Results_Google" sheet exists, create it if not
     try:
@@ -266,7 +368,7 @@ def write_google_results_to_sheet(results, search_term):
             "Times Shown Lower Bound", "Times Shown Upper Bound", "Demographic Info",
             "Geo Location", "Contextual Signals", "Customer Lists", "Topics of Interest"
         ]
-        sheet.append_row(headers)
+        _free_space_and_append_row(sheet, headers)
 
     # Prepare rows for batch writing
     rows = []
@@ -323,4 +425,4 @@ def write_google_results_to_sheet(results, search_term):
         rows.append(row)
 
     # Batch write rows to the sheet
-    sheet.append_rows(rows, value_input_option="RAW")
+    _free_space_and_retry_append(sheet, rows)

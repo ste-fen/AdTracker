@@ -25,9 +25,10 @@ def update_env_file(key, value):
     """ Update .env file with a new key-value pair """
     env_file = ".env"
     lines = []
-    
-    with open(env_file, "r") as file:
-        lines = file.readlines()
+
+    if os.path.exists(env_file):
+        with open(env_file, "r") as file:
+            lines = file.readlines()
     
     with open(env_file, "w") as file:
         for line in lines:

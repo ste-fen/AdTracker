@@ -4,16 +4,16 @@ import os
 
 def query_google_ad_library(term, min_date, max_date):
     """Query BigQuery and return the results."""
-    # Ensure GOOGLE_APPLICATION_CREDENTIALS is set
-    credentials_path = GOOGLE_BIGQUERY_SERVICE_ACCOUNT_FILE
-    if not credentials_path:
-        raise EnvironmentError("SERVICE_ACCOUNT_FILE is not set in the .env file.")
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+    try:
+        # Optional fallback for local development with a service account key file.
+        credentials_path = GOOGLE_BIGQUERY_SERVICE_ACCOUNT_FILE
+        if credentials_path:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
 
-    # Initialize the BigQuery client
-    client = bigquery.Client()
+        # If no file is provided, BigQuery client uses ADC (recommended for Cloud Run).
+        client = bigquery.Client()
 
-    query = f"""
+        query = f"""
 SELECT 
     -- Fields from creative_stats
     creative_stats.advertiser_id,
@@ -54,12 +54,17 @@ WHERE
     AND DATE(region_stats.last_shown) <= DATE("{max_date}")
     """
 
-    # Run the query
-    query_job = client.query(query)
+        # Run the query
+        query_job = client.query(query)
 
-    # Wait for the query to finish and fetch results
-    results = query_job.result()
+        # Wait for the query to finish and fetch results
+        results = query_job.result()
+        
+        # Convert to list to count rows
+        rows = [dict(row) for row in results]
+        row_count = len(rows)
+        
+        return rows
 
-    # Convert results to a list of dictionaries
-    #rows = [dict(row) for row in results]
-    return results
+    except Exception as e:
+        raise

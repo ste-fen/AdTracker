@@ -6,6 +6,10 @@ from config import META_APP_ID, META_APP_SECRET, update_env_file
 # Load environment variables from .env file
 load_dotenv()
 
+
+class MetaTokenExpiredError(Exception):
+    """Raised when the Meta access token is missing, invalid, or expired."""
+
 def exchange_user_token_for_long_lived_token(user_token):
     """Exchange a short-lived user token for a long-lived token."""
     url = "https://graph.facebook.com/v22.0/oauth/access_token"
@@ -29,12 +33,30 @@ def exchange_user_token_for_long_lived_token(user_token):
         print("Failed to exchange user token for long-lived token:", data)
         return None
 
+
+def refresh_meta_access_token(short_lived_token):
+    """Refresh and persist the Meta access token using a short-lived user token."""
+    if not short_lived_token:
+        raise ValueError("A short-lived Meta user token is required.")
+
+    long_lived_token = exchange_user_token_for_long_lived_token(short_lived_token.strip())
+    if not long_lived_token:
+        raise ValueError("Could not exchange token. Please verify app credentials and token scope.")
+
+    # Cloud Run file system is ephemeral; avoid pretending the token is permanently stored there.
+    if not os.getenv("K_SERVICE"):
+        update_env_file("META_ACCESS_TOKEN", long_lived_token)
+    os.environ["META_ACCESS_TOKEN"] = long_lived_token
+    return long_lived_token
+
 def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
     """Query Meta Ads Library with automatic token refresh."""
     # Read the access token from the .env file
-    token = os.getenv("META_ACCESS_TOKEN")
+    token = os.getenv("META_ACCESS_TOKEN").strip()
     if not token:
-        token = 'REFETCH_TOKEN'  # Placeholder for the token if not found
+        raise MetaTokenExpiredError(
+            "META_ACCESS_TOKEN is missing. Refresh it in the web UI before querying Meta Ads."
+        )
     url = "https://graph.facebook.com/v22.0/ads_archive"
     headers = {"Authorization": f"Bearer {token}"}
     params = {
@@ -66,16 +88,9 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
         if "error" in data:
             error_code = data["error"].get("code")
             if error_code == 190 or error_code == 10:  # Token expired or invalid
-                print("Meta token expired or invalid. Please provide a new user token.")
-                short_lived_token = input("Paste your short-lived user token: ").strip()
-                long_lived_token = exchange_user_token_for_long_lived_token(short_lived_token)
-                if long_lived_token:
-                    # Update the .env file with the new token
-                    update_env_file("META_ACCESS_TOKEN", long_lived_token)
-                    return query_meta_ads(term)  # Retry the query with the new token
-                else:
-                    print("Failed to refresh token. Cannot proceed.")
-                    return {"error": "Failed to refresh token"}
+                raise MetaTokenExpiredError(
+                    "Meta access token expired or invalid. Refresh it in the browser UI and retry."
+                )
             else:
                 print(f"Meta API error: {data['error']}")
                 return data

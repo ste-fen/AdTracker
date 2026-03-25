@@ -5,3 +5,4 @@ google-auth-httplib2
 requests
 python-dotenv
 google-cloud-bigquery
+streamlit
