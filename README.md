@@ -142,24 +142,11 @@ PowerShell helper script for this project:
 
 The script always deploys with public browser access (`--allow-unauthenticated`) and is preconfigured for project `adtracker-491310`, region `europe-west3`, service `adtracker`, and all current Secret Manager bindings.
 
-### 4b) Easiest browser access: public Cloud Run + app password
+### 5) Access
 
-If users should open the app directly in the browser without `gcloud`, deploy it publicly and keep the shared password enabled in the app:
-```sh
-echo -n "<APP_PASSWORD>" | gcloud secrets create APP_PASSWORD --data-file=-
+Access the app via URL and password.
 
-gcloud run deploy adtracker \
-   --image gcr.io/<PROJECT_ID>/adtracker \
-   --region europe-west3 \
-   --platform managed \
-   --service-account adtracker-run-sa@<PROJECT_ID>.iam.gserviceaccount.com \
-   --allow-unauthenticated \
-   --set-secrets "GOOGLE_SHEET_ID=GOOGLE_SHEET_ID:latest,APP_PASSWORD=APP_PASSWORD:latest,META_ACCESS_TOKEN=META_ACCESS_TOKEN:latest,META_APP_ID=META_APP_ID:latest,META_APP_SECRET=META_APP_SECRET:latest,TIKTOK_ACCESS_TOKEN=TIKTOK_ACCESS_TOKEN:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest"
-```
-
-This is the simplest app-level auth setup. Everyone reaches the URL, but the app itself requires the shared password before showing any content.
-
-### 5) Grant user access to the app
+### 6) Grant user access to the app (optional)
 ```sh
 gcloud run services add-iam-policy-binding adtracker \
    --region europe-west3 \
@@ -168,7 +155,7 @@ gcloud run services add-iam-policy-binding adtracker \
 ```
 
 ### Security notes for Cloud Run
-- Do not put `.env` or JSON key files into the container image.
+- Do not put `.env` or JSON key files into the container image (src directory).
 - Prefer Application Default Credentials (runtime service account) over key files.
 - Token refresh in the web UI updates the in-memory token for the running container. For persistent rotation in production, update `META_ACCESS_TOKEN` in Secret Manager and deploy a new revision.
 - If you use `--allow-unauthenticated`, keep `APP_PASSWORD` configured so the app does not become publicly accessible without any gate.
@@ -177,7 +164,7 @@ gcloud run services add-iam-policy-binding adtracker \
 ```
 adtracker/
 │── scripts/
-│   └── deploy-cloud-run.ps1          # PowerShell helper for Cloud Run deployment
+│   └── deploy-cloud-run_example.ps1  # PowerShell helper for Cloud Run deployment
 │
 │── src/
 │   │── main.py                       # Main script (batch ad queries)
@@ -187,8 +174,7 @@ adtracker/
 │   │── meta_ads.py                   # Meta Ads API queries (with auto token refresh)
 │   │── tiktok_ads.py                 # TikTok Ads API queries
 │   │── google_ads.py                 # Google Ad Library / BigQuery queries
-│   │── utils.py                      # Utility functions
-│   └── __pycache__/                  # Python cache (auto-generated)
+│   └── utils.py                      # Utility functions
 │
 │── .dockerignore                     # Files to exclude from Docker image
 │── .env                              # Local environment variables (API keys, passwords)
