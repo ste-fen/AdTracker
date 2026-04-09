@@ -122,8 +122,20 @@ Add permissions to the secrets:
 gcloud projects add-iam-policy-binding <PROJECT-ID> --member="serviceAccount:adtracker-run-sa@<PROJECT-ID>.iam.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
 ```
 
-### 4) Build and deploy
+### 4) Grant developer access to build and deploy the app (optional)
 ```sh
+gcloud projects add-iam-policy-binding <PROJECT_ID> --member="user:<YOUR_EMAIL>" --role="roles/cloudbuild.builds.editor"
+
+gcloud projects add-iam-policy-binding <PROJECT_ID> --member="user:<YOUR_EMAIL>" --role="roles/storage.admin"
+
+gcloud projects add-iam-policy-binding <PROJECT_ID> --member="user:<YOUR_EMAIL>" --role="roles/serviceusage.serviceUsageConsumer"
+
+```
+
+### 5) Build and deploy
+```sh
+gcloud artifacts repositories create adtracker --repository-format=docker --location=europe-west3 --description="Docker images for AdTracker"
+
 gcloud builds submit --tag gcr.io/<PROJECT_ID>/adtracker
 
 gcloud run deploy adtracker \
@@ -142,17 +154,9 @@ PowerShell helper script for this project:
 
 The script always deploys with public browser access (`--allow-unauthenticated`) and is preconfigured for project `adtracker-491310`, region `europe-west3`, service `adtracker`, and all current Secret Manager bindings.
 
-### 5) Access
+### 6) Access
 
 Access the app via URL and password.
-
-### 6) Grant user access to the app (optional)
-```sh
-gcloud run services add-iam-policy-binding adtracker \
-   --region europe-west3 \
-   --member="user:<YOUR_EMAIL>" \
-   --role="roles/run.invoker"
-```
 
 ### Security notes for Cloud Run
 - Do not put `.env` or JSON key files into the container image (src directory).
