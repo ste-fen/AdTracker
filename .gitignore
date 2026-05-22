@@ -4,3 +4,4 @@
 /src/__pycache__
 /.github
 /scripts/deploy-cloud-run.ps1
+/.venv

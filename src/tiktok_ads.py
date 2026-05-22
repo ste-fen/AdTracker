@@ -40,7 +40,7 @@ def is_token_expired():
     """Check if the current access token has expired."""
     return time.time() - TOKEN_LAST_REFRESHED >= TOKEN_EXPIRATION_TIME
 
-def query_tiktok_ads(search_term, min_date, max_date):
+def query_tiktok_ads(search_term, min_date, max_date, country_code=None):
     """Query TikTok Ads using the Commercial Content API."""
     global TIKTOK_ACCESS_TOKEN
     if is_token_expired():
@@ -65,7 +65,7 @@ def query_tiktok_ads(search_term, min_date, max_date):
                 "min": min_date,  # Dynamically set min date
                 "max": max_date   # Dynamically set max date
             },
-            "country_code": "AT"
+            "country_code": country_code or "AT"
         },
     }
 
@@ -74,7 +74,7 @@ def query_tiktok_ads(search_term, min_date, max_date):
         print("Access token expired or invalid. Refreshing token...")
         TIKTOK_ACCESS_TOKEN = get_client_access_token()
         if TIKTOK_ACCESS_TOKEN:
-            return query_tiktok_ads(search_term, min_date, max_date)
+            return query_tiktok_ads(search_term, min_date, max_date, country_code=country_code)
         else:
             print("Failed to refresh access token.")
             return None
@@ -115,9 +115,10 @@ def get_ad_details(ad_id):
         print(f"Failed to fetch ad details. Status code: {response.status_code}, Response: {response.text}")
         return None
 
-def query_tiktok_ads_with_details(search_term, min_date, max_date):
+def query_tiktok_ads_with_details(search_term, min_date, max_date, max_results=500, country_code=None):
     """Query TikTok Ads and fetch details for all returned ads."""
-    ads_data = query_tiktok_ads(search_term, min_date, max_date)
+    max_results = int(max_results) if max_results else 500
+    ads_data = query_tiktok_ads(search_term, min_date, max_date, country_code=country_code)
 
     # Check if "data" and "ads" keys exist and if "ads" is a list
     if not ads_data or "data" not in ads_data or "ads" not in ads_data["data"] or not isinstance(ads_data["data"]["ads"], list):
@@ -126,6 +127,7 @@ def query_tiktok_ads_with_details(search_term, min_date, max_date):
 
     # Extract ad IDs from the nested structure
     ad_ids = [ad["ad"]["id"] for ad in ads_data["data"]["ads"] if "ad" in ad and "id" in ad["ad"]]
+    ad_ids = ad_ids[:max_results]
     if not ad_ids:
         return None
 

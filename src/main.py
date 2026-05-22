@@ -31,10 +31,13 @@ def parse_date(date_str, output_format=None):
         print(f"Error parsing date '{date_str}': {e}")
         return None
 
-def main():
+def main(collect_meta_ads=False, max_results_per_platform=500, country_code=None):
     print("Clearing results sheets before crawler start...")
     clear_results_sheets()
     search_terms = read_search_terms()
+    all_meta_ads = []
+    max_results_per_platform = int(max_results_per_platform) if max_results_per_platform else 500
+    country_code = country_code or "AT"
 
     for entry in search_terms:
         term = entry["term"]
@@ -60,7 +63,15 @@ def main():
             if not meta_date_from or not meta_date_to:
                 print(f"Skipping Meta fetch for term '{term}' due to invalid dates.")
                 continue
-            meta_results = query_meta_ads(term, delivery_date_min=meta_date_from, delivery_date_max=meta_date_to)
+            meta_results = query_meta_ads(
+                term,
+                delivery_date_min=meta_date_from,
+                delivery_date_max=meta_date_to,
+                max_ads=max_results_per_platform,
+                country_code=country_code,
+            )
+            if collect_meta_ads and isinstance(meta_results, list):
+                all_meta_ads.extend(meta_results)
             meta_count = result_count(meta_results)
             print(f"{meta_count} Meta results for term '{term}'")
             if meta_count > 0:
@@ -73,7 +84,13 @@ def main():
             if not tiktok_min_date or not tiktok_max_date:
                 print(f"Skipping TikTok fetch for term '{term}' due to invalid dates.")
                 continue
-            tiktok_results = query_tiktok_ads_with_details(term, tiktok_min_date, tiktok_max_date)
+            tiktok_results = query_tiktok_ads_with_details(
+                term,
+                tiktok_min_date,
+                tiktok_max_date,
+                max_results=max_results_per_platform,
+                country_code=country_code,
+            )
             tiktok_count = result_count(tiktok_results)
             print(f"{tiktok_count} TikTok results for term '{term}'")
             if tiktok_count > 0:
@@ -86,13 +103,24 @@ def main():
             if not google_date_from or not google_date_to:
                 print(f"Skipping Google fetch for term '{term}' due to invalid dates.")
                 continue
-            google_results = query_google_ad_library(term, google_date_from, google_date_to)
+            google_results = query_google_ad_library(
+                term,
+                google_date_from,
+                google_date_to,
+                max_results=max_results_per_platform,
+                country_code=country_code,
+            )
             google_count = result_count(google_results)
             print(f"{google_count} Google results for term '{term}'")
             if google_count > 0:
                 print(f"Writing Google results for term '{term}'...")
                 write_google_results_to_sheet(google_results, term)
             print("-" * 100)
+
+    if collect_meta_ads:
+        return {"meta_ads": all_meta_ads}
+
+    return None
 
 
 if __name__ == "__main__":

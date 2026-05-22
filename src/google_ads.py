@@ -2,9 +2,11 @@ from config import GOOGLE_BIGQUERY_SERVICE_ACCOUNT_FILE
 from google.cloud import bigquery
 import os
 
-def query_google_ad_library(term, min_date, max_date):
+def query_google_ad_library(term, min_date, max_date, max_results=500, country_code=None):
     """Query BigQuery and return the results."""
     try:
+        max_results = int(max_results) if max_results else 500
+        country_code = country_code or "AT"
         # Optional fallback for local development with a service account key file.
         credentials_path = GOOGLE_BIGQUERY_SERVICE_ACCOUNT_FILE
         if credentials_path:
@@ -49,7 +51,7 @@ WHERE
         LOWER(creative_stats.advertiser_disclosed_name) LIKE "%{term}%" OR
         LOWER(creative_stats.advertiser_legal_name) LIKE "%{term}%"
     )
-    AND region_stats.region_code = "AT"
+    AND region_stats.region_code = "{country_code}"
     AND DATE(region_stats.first_shown) >= DATE("{min_date}")
     AND DATE(region_stats.last_shown) <= DATE("{max_date}")
     """
@@ -62,7 +64,7 @@ WHERE
         
         # Convert to list to count rows
         rows = [dict(row) for row in results]
-        row_count = len(rows)
+        rows = rows[:max_results]
         
         return rows
 

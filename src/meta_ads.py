@@ -49,7 +49,7 @@ def refresh_meta_access_token(short_lived_token):
     os.environ["META_ACCESS_TOKEN"] = long_lived_token
     return long_lived_token
 
-def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
+def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None, max_ads=500, country_code=None):
     """Query Meta Ads Library with automatic token refresh."""
     # Read the access token from the .env file
     token = os.getenv("META_ACCESS_TOKEN").strip()
@@ -64,7 +64,7 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
         # "search_type": "KEYWORD_EXACT_PHRASE",
         "ad_type": "ALL",
         "ad_active_status": "ALL",
-        "ad_reached_countries": ['AT'],  # Replace 'AT' with the desired country code(s)
+        "ad_reached_countries": [country_code or 'AT'],  # Country code from UI selection
         "limit": 200,  # Maximum number of results per page
         "access_token": token,
         "fields": "id,ad_creation_time,ad_creative_bodies,ad_creative_link_captions,ad_creative_link_descriptions,ad_creative_link_titles,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,age_country_gender_reach_breakdown,beneficiary_payers,bylines,currency,delivery_by_region,demographic_distribution,estimated_audience_size,eu_total_reach,impressions,page_id,page_name,publisher_platforms,spend,target_ages,target_gender,target_locations"
@@ -77,12 +77,19 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
         params["ad_delivery_date_max"] = delivery_date_max #.strftime("%Y-%m-%d")
 
     all_ads = []  # List to store all ad details
+    max_ads = int(max_ads) if max_ads else 500
     while url:
         response = requests.get(url, headers=headers, params=params)
+
         if response.status_code != 200:
             print(f"Error querying Meta Ads API: {response.status_code} - {response.text}")
             return all_ads
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError:
+            print("Meta API returned an invalid JSON response.")
+            return all_ads
 
         # Check for token errors
         if "error" in data:
@@ -93,10 +100,17 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
                 )
             else:
                 print(f"Meta API error: {data['error']}")
-                return data
+                return all_ads
 
-        # Add the current page of ads to the list
-        all_ads.extend(data.get("data", []))
+        # Add the current page of ads to the list (capped at max_ads)
+        page_ads = data.get("data", [])
+        remaining_capacity = max_ads - len(all_ads)
+        if remaining_capacity <= 0:
+            break
+        all_ads.extend(page_ads[:remaining_capacity])
+        if len(all_ads) >= max_ads:
+            print(f"Reached Meta ad cap of {max_ads} entries. Stopping pagination.")
+            break
 
         # Get the next page URL from the "paging" field
         paging = data.get("paging", {})
@@ -106,3 +120,23 @@ def query_meta_ads(term, delivery_date_min=None, delivery_date_max=None):
         params = {}
 
     return all_ads
+
+
+def test_query_meta_ads(search_term="nike", max_ads=500):
+    """Small local test helper to call query_meta_ads with one term."""
+    print(f"[Meta Test] querying term: {search_term}")
+    ads = query_meta_ads(search_term, max_ads=max_ads)
+    print(f"[Meta Test] ads fetched: {len(ads)}")
+
+    if ads:
+        first_ad = ads[0]
+        print(f"[Meta Test] first ad id: {first_ad.get('id')}")
+        print(f"[Meta Test] first snapshot url: {first_ad.get('ad_snapshot_url')}")
+
+    return ads
+
+
+if __name__ == "__main__":
+    term = os.getenv("META_TEST_TERM", "nike")
+    max_ads = int(os.getenv("META_TEST_MAX_ADS", "500"))
+    test_query_meta_ads(term, max_ads=max_ads)
