@@ -22,6 +22,19 @@ def _ensure_windows_proactor_event_loop_policy():
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
+def _build_browser_launch_options():
+    launch_options = {"headless": True}
+
+    if os.getenv("K_SERVICE"):
+        launch_options["args"] = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+        ]
+
+    return launch_options
+
+
 def _with_access_token(snapshot_url, access_token):
     """Append or replace the access_token query parameter in a snapshot URL."""
     parsed = urlparse(snapshot_url)
@@ -90,6 +103,7 @@ def generate_meta_screenshot_archive(ads, access_token, timeout_ms=35000):
         raise ValueError("META_ACCESS_TOKEN is required for snapshot screenshots.")
 
     _ensure_windows_proactor_event_loop_policy()
+    launch_options = _build_browser_launch_options()
 
     attempted = 0
     created_paths = []
@@ -97,9 +111,12 @@ def generate_meta_screenshot_archive(ads, access_token, timeout_ms=35000):
     with tempfile.TemporaryDirectory(prefix="meta_ad_screenshots_") as temp_dir:
         output_dir = Path(temp_dir)
 
+        print(f"Starting screenshot generation for {len(ads)} ads with timeout {timeout_ms}ms each...")
+
         try:
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True)
+                browser = playwright.chromium.launch(**launch_options)
+                print("Browser launched successfully.")
                 context = browser.new_context(viewport={"width": 1000, "height": 1000})
 
                 for ad in ads:
@@ -114,14 +131,16 @@ def generate_meta_screenshot_archive(ads, access_token, timeout_ms=35000):
                     page = context.new_page()
                     try:
                         target_url = _with_access_token(snapshot_url, access_token)
-                        page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                        page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        page.wait_for_timeout(3000)
                         _dismiss_cookie_banner(page)
                         page.screenshot(path=str(target_path), full_page=True)
                         created_paths.append(target_path)
-                    except PlaywrightTimeoutError:
-                        print(f"Screenshot timeout for ad id {ad_id}")
+                        print(f"Screenshot created for ad id {ad_id} at {target_path}")
+                    except PlaywrightTimeoutError as exc:
+                        print(f"Screenshot timeout for ad id {ad_id}: {exc}")
                     except Exception as exc:
-                        print(f"Screenshot failed for ad id {ad_id}: {exc}")
+                        print(f"Screenshot failed for ad id {ad_id}: {type(exc).__name__}: {exc}")
                     finally:
                         page.close()
 
@@ -133,6 +152,8 @@ def generate_meta_screenshot_archive(ads, access_token, timeout_ms=35000):
                 "Bitte pruefe, dass du in einer normalen lokalen Python-Umgebung laeufst "
                 "und installiere Browser mit: playwright install chromium"
             ) from exc
+        except Exception as exc:
+            print(f"Playwright failed to start or run: {type(exc).__name__}: {exc}")
 
         if not created_paths:
             return None, 0, attempted

@@ -1,14 +1,224 @@
 import io
+import base64
+import hashlib
 import hmac
+import json
 import os
+import re
+import time
 import traceback
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
 from main import main
 from meta_ads import MetaTokenExpiredError, refresh_meta_access_token
 from screenshot_helper import generate_meta_screenshot_archive
+
+
+AUTH_QUERY_PARAM = "auth"
+AUTH_TOKEN_TTL_SECONDS = 12 * 60 * 60
+
+
+def _render_inline_iframe(html_content, height):
+    encoded_html = base64.b64encode(html_content.encode("utf-8")).decode("ascii")
+    normalized_height = height
+    if isinstance(height, int) and height <= 0:
+        normalized_height = 1
+    st.iframe(f"data:text/html;base64,{encoded_html}", height=normalized_height)
+
+
+def _next_nonce(key):
+    value = st.session_state.get(key, 0) + 1
+    st.session_state[key] = value
+    return value
+
+
+def _safe_download_filename(file_name):
+    normalized = re.sub(r"[^A-Za-z0-9._-]", "_", str(file_name))
+    if not normalized.lower().endswith(".zip"):
+        normalized = f"{normalized}.zip"
+    return normalized
+
+
+class LiveUILogStream:
+    """File-like logger that renders output in a Streamlit text area immediately."""
+
+    def __init__(self, placeholder, scroll_placeholder, title="Logs", max_chars=120000):
+        self.placeholder = placeholder
+        self.scroll_placeholder = scroll_placeholder
+        self.title = title
+        self.max_chars = max_chars
+        self._buffer = io.StringIO()
+        self._scroll_nonce = 0
+
+    def write(self, text):
+        text = "" if text is None else str(text)
+        if not text:
+            return 0
+
+        self._buffer.write(text)
+        self._render()
+        return len(text)
+
+    def flush(self):
+        self._render()
+
+    def log_line(self, message):
+        self.write(f"{message}\n")
+
+    def getvalue(self):
+        return self._buffer.getvalue()
+
+    def _render(self):
+        text = self._buffer.getvalue()
+        if len(text) > self.max_chars:
+            text = text[-self.max_chars :]
+        with self.placeholder.container():
+            st.markdown(f"**{self.title}**")
+            st.code(text or "(no logs yet)")
+
+        self._scroll_nonce += 1
+        with self.scroll_placeholder.container():
+            _render_inline_iframe(
+                f"""
+                <div id="crawler-log-anchor-{self._scroll_nonce}"></div>
+                <script>
+                    const anchor = document.getElementById("crawler-log-anchor-{self._scroll_nonce}");
+                    if (anchor) {{
+                        anchor.scrollIntoView({{ behavior: "smooth", block: "end" }});
+                    }}
+                </script>
+                """,
+                height=0,
+            )
+
+
+def _build_auth_token(password, expires_at):
+    payload = str(int(expires_at))
+    signature = hmac.new(
+        password.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _is_valid_auth_token(token, password):
+    if not token or "." not in token:
+        return False
+
+    payload, signature = token.split(".", 1)
+    if not payload.isdigit():
+        return False
+
+    if int(payload) < int(time.time()):
+        return False
+
+    expected_signature = hmac.new(
+        password.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected_signature)
+
+
+def _set_auth_query_param(value):
+    try:
+        st.query_params[AUTH_QUERY_PARAM] = value
+    except Exception:
+        st.experimental_set_query_params(**{AUTH_QUERY_PARAM: value})
+
+
+def _clear_auth_query_param():
+    try:
+        if AUTH_QUERY_PARAM in st.query_params:
+            del st.query_params[AUTH_QUERY_PARAM]
+    except Exception:
+        st.experimental_set_query_params()
+
+
+def _get_auth_query_param():
+    try:
+        raw_value = st.query_params.get(AUTH_QUERY_PARAM, "")
+    except Exception:
+        raw_value = st.experimental_get_query_params().get(AUTH_QUERY_PARAM, "")
+
+    if isinstance(raw_value, list):
+        return raw_value[0] if raw_value else ""
+    return raw_value
+
+
+def _render_zip_download_blob(zip_bytes, file_name, auto_scroll=False):
+    zip_b64 = base64.b64encode(zip_bytes).decode("ascii")
+    safe_file_name = json.dumps(_safe_download_filename(file_name))
+    safe_auto_scroll = "true" if auto_scroll else "false"
+    button_id = f"zip-download-btn-{_next_nonce('zip_download_btn_nonce')}"
+
+    _render_inline_iframe(
+        f"""
+        <div style="margin-top:0.25rem; margin-bottom:0.25rem;">
+            <button id="{button_id}" style="
+                background:#0e1117;
+                color:#fafafa;
+                border:1px solid #666;
+                border-radius:0.5rem;
+                padding:0.5rem 0.9rem;
+                cursor:pointer;
+                font-size:0.95rem;
+            ">Meta Screenshot ZIP herunterladen</button>
+        </div>
+        <script>
+            (function() {{
+                const fileName = {safe_file_name};
+                const b64 = "{zip_b64}";
+                const shouldAutoScroll = {safe_auto_scroll};
+                const btn = document.getElementById("{button_id}");
+                if (!btn) return;
+
+                if (shouldAutoScroll) {{
+                    btn.scrollIntoView({{ behavior: "smooth", block: "center" }});
+                }}
+
+                btn.addEventListener("click", function() {{
+                    const binary = atob(b64);
+                    const len = binary.length;
+                    const bytes = new Uint8Array(len);
+                    for (let i = 0; i < len; i++) {{
+                        bytes[i] = binary.charCodeAt(i);
+                    }}
+
+                    const blob = new Blob([bytes], {{ type: "application/zip" }});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                }});
+            }})();
+        </script>
+        """,
+        height=58,
+    )
+
+
+def _trigger_ui_scroll(scroll_placeholder):
+    nonce = _next_nonce("ui_scroll_nonce")
+
+    with scroll_placeholder.container():
+        _render_inline_iframe(
+            f"""
+            <div id="ui-scroll-anchor-{nonce}"></div>
+            <script>
+                const anchor = document.getElementById("ui-scroll-anchor-{nonce}");
+                if (anchor) {{
+                    anchor.scrollIntoView({{ behavior: "smooth", block: "end" }});
+                }}
+            </script>
+            """,
+            height=0,
+        )
 
 
 def require_login():
@@ -25,6 +235,11 @@ def require_login():
     if st.session_state.get("authenticated"):
         return
 
+    auth_token = _get_auth_query_param()
+    if _is_valid_auth_token(auth_token, normalized_expected_password):
+        st.session_state["authenticated"] = True
+        return
+
     st.title("AdTracker Login")
     st.caption("Enter the shared app password to continue.")
 
@@ -33,6 +248,10 @@ def require_login():
         normalized_submitted_password = submitted_password.strip()
         if hmac.compare_digest(normalized_submitted_password, normalized_expected_password):
             st.session_state["authenticated"] = True
+            expires_at = int(time.time()) + AUTH_TOKEN_TTL_SECONDS
+            _set_auth_query_param(
+                _build_auth_token(normalized_expected_password, expires_at)
+            )
             st.rerun()
         else:
             st.error("Invalid password.")
@@ -47,12 +266,14 @@ st.caption("Run the crawler and refresh Meta tokens directly in the browser.")
 
 if st.button("Logout"):
     st.session_state["authenticated"] = False
+    _clear_auth_query_param()
     st.rerun()
 
 run_tab, token_tab = st.tabs(["Crawler", "Meta Token"])
 
 with run_tab:
     st.subheader("Crawler")
+
     country_options = {"Österreich (AT)": "AT", "Deutschland (DE)": "DE"}
     selected_country_label = st.selectbox(
         "Land",
@@ -88,10 +309,13 @@ with run_tab:
     )
 
     if st.button("Crawler starten", type="primary"):
-        log_buffer = io.StringIO()
+        live_logs = None
         try:
             with st.spinner("Crawler läuft..."):
-                with redirect_stdout(log_buffer):
+                logs_placeholder = st.empty()
+                logs_scroll_placeholder = st.empty()
+                live_logs = LiveUILogStream(logs_placeholder, logs_scroll_placeholder)
+                with redirect_stdout(live_logs), redirect_stderr(live_logs):
                     run_result = main(
                         collect_meta_ads=enable_meta_screenshots,
                         max_results_per_platform=int(max_results_all_platforms),
@@ -112,45 +336,67 @@ with run_tab:
                 else:
                     limited_meta_ads = meta_ads[: int(screenshot_limit)]
                     with st.spinner("Meta Screenshots werden erstellt..."):
-                        zip_bytes, created_count, attempted_count = generate_meta_screenshot_archive(
-                            limited_meta_ads,
-                            token,
-                        )
+                        with redirect_stdout(live_logs), redirect_stderr(live_logs):
+                            zip_bytes, created_count, attempted_count = generate_meta_screenshot_archive(
+                                limited_meta_ads,
+                                token,
+                            )
                     if zip_bytes and created_count > 0:
                         st.session_state["meta_screenshots_zip"] = zip_bytes
-                        st.session_state["meta_screenshots_name"] = "meta_ad_screenshots.zip"
-                        st.success(
-                            f"{created_count} Screenshots erstellt (versucht: {attempted_count}, Limit N={int(screenshot_limit)})."
+                        timestamp = datetime.now(ZoneInfo("Europe/Vienna")).strftime(
+                            "%Y%m%d_%H%M%S"
                         )
+                        st.session_state["meta_screenshots_name"] = (
+                            f"meta_ad_screenshots_{timestamp}.zip"
+                        )
+                        st.session_state["scroll_to_zip_download"] = True
+                        # st.success(
+                        #     f"{created_count} Screenshots erstellt (versucht: {attempted_count}, Limit N={int(screenshot_limit)})."
+                        # )
+                        # _trigger_ui_scroll(ui_scroll_placeholder)
                     else:
                         st.warning(
                             f"Keine Screenshots erstellt (Limit N={int(screenshot_limit)}). Bitte pruefe Token/Erreichbarkeit der Snapshot-URLs."
                         )
 
             st.success("Crawl erfolgreich abgeschlossen.")
+            st.session_state["scroll_to_result"] = True
         except MetaTokenExpiredError as exc:
             st.error(str(exc))
             st.info(
                 "Gehe zum Tab 'Meta Token', aktualisiere den Token und starte den Crawler erneut."
             )
+            if live_logs is not None:
+                live_logs.log_line(f"MetaTokenExpiredError: {exc}")
         except Exception as exc:
             traceback_text = traceback.format_exc()
-            print(traceback_text)
+            if live_logs is not None:
+                live_logs.log_line(f"Unerwarteter Fehler: {exc!r}")
+                live_logs.log_line(traceback_text)
             st.error(f"Unerwarteter Fehler: {exc!r}")
             st.exception(exc)
-            st.text_area("Traceback", traceback_text, height=260)
+            st.text_area("Traceback", traceback_text, height=260, key="crawler_traceback")
         finally:
-            logs = log_buffer.getvalue().strip()
-            if logs:
-                st.text_area("Logs", logs, height=380)
+            if live_logs is not None:
+                live_logs.flush()
+
+    ui_scroll_placeholder = st.empty()
 
     if st.session_state.get("meta_screenshots_zip"):
-        st.download_button(
-            "Meta Screenshot ZIP herunterladen",
-            data=st.session_state["meta_screenshots_zip"],
-            file_name=st.session_state.get("meta_screenshots_name", "meta_ad_screenshots.zip"),
-            mime="application/zip",
+        should_scroll_download_button = bool(st.session_state.get("scroll_to_zip_download"))
+        _render_zip_download_blob(
+            st.session_state["meta_screenshots_zip"],
+            st.session_state.get("meta_screenshots_name", "meta_ad_screenshots.zip"),
+            auto_scroll=should_scroll_download_button,
         )
+
+    should_scroll_to_result = bool(
+        st.session_state.get("scroll_to_result")
+    )
+    if should_scroll_to_result:
+        _trigger_ui_scroll(ui_scroll_placeholder)
+        st.session_state["scroll_to_result"] = False
+        st.session_state["scroll_to_zip_download"] = False
 
 with token_tab:
     st.subheader("Meta Token Refresh")
@@ -168,6 +414,7 @@ with token_tab:
         "Short-lived user token",
         height=140,
         placeholder="EAAB...",
+        key="meta_token_input",
     )
 
     if st.button("Meta Token aktualisieren"):
