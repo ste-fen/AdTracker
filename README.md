@@ -55,9 +55,21 @@ This will:
 2. Query the Meta, TikTok, and Google Ad Library APIs.
 3. Write results back into the second column of the same Google Sheet.
 4. Clear `Results_Meta`, `Results_TikTok`, and `Results_Google` before each crawler run.
+5. Save a JSON export per run in `outputs/` and optionally upload it to an FTP server.
 
 In the web app, open the `Meta Token` tab to refresh `META_ACCESS_TOKEN` in the browser.
 You can paste a short-lived user token from the Meta Graph API Explorer and store the new long-lived token in `.env`.
+
+In the `Crawler` tab, you can decide per run whether the next crawl should also upload the generated JSON file to FTP.
+The JSON contains these columns:
+- Meta: `Search Term`, `Ad Creative Bodies`, `Ad Creative Link Captions`, `Ad Snapshot URL`
+- TikTok: `Search Term`, `Video URL`
+- Google: `Search Term`, `Creative Page URL`
+
+For each search term, the JSON also stores:
+- number of ads per platform (`meta`, `tiktok`, `google`)
+- total ad count
+- number of queried platforms
 
 The web app also supports a simple shared password via `APP_PASSWORD`.
 Locally, set it in `.env`. On Cloud Run, pass it via Secret Manager.
@@ -163,6 +175,16 @@ Access the app via URL and password.
 - Prefer Application Default Credentials (runtime service account) over key files.
 - Token refresh in the web UI updates the in-memory token for the running container. For persistent rotation in production, update `META_ACCESS_TOKEN` in Secret Manager and deploy a new revision.
 - If you use `--allow-unauthenticated`, keep `APP_PASSWORD` configured so the app does not become publicly accessible without any gate.
+
+### Optional FTP configuration for JSON uploads
+
+Set these variables in `.env` (local) or Secret Manager (Cloud Run):
+- `FTP_HOST`
+- `FTP_PORT` (default `21`)
+- `FTP_USERNAME`
+- `FTP_PASSWORD`
+- `FTP_REMOTE_DIR` (optional)
+- `FTP_USE_TLS` (`true` for FTPS, otherwise `false`)
 
 ## Project Structure
 ```

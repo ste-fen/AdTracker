@@ -12,6 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from main import main
 from meta_ads import MetaTokenExpiredError, refresh_meta_access_token
@@ -27,7 +28,9 @@ def _render_inline_iframe(html_content, height):
     normalized_height = height
     if isinstance(height, int) and height <= 0:
         normalized_height = 1
-    st.iframe(f"data:text/html;base64,{encoded_html}", height=normalized_height)
+    components.iframe(
+        f"data:text/html;base64,{encoded_html}", height=normalized_height
+    )
 
 
 def _next_nonce(key):
@@ -307,6 +310,11 @@ with run_tab:
         disabled=not enable_meta_screenshots,
         help="Nur wenn die Screenshot-Option aktiv ist. Es werden die ersten N Meta Ads verarbeitet.",
     )
+    upload_json_to_ftp = st.checkbox(
+        "Ergebnisse dieser Suche als JSON auf FTP-Server übertragen",
+        value=False,
+        help="Speichert immer eine lokale JSON-Datei. Bei Aktivierung wird die Datei zusätzlich auf den konfigurierten FTP-Server hochgeladen.",
+    )
 
     if st.button("Crawler starten", type="primary"):
         live_logs = None
@@ -320,6 +328,8 @@ with run_tab:
                         collect_meta_ads=enable_meta_screenshots,
                         max_results_per_platform=int(max_results_all_platforms),
                         country_code=selected_country_code,
+                        save_results_json=True,
+                        upload_results_json_to_ftp=upload_json_to_ftp,
                     )
 
             st.session_state.pop("meta_screenshots_zip", None)
@@ -360,6 +370,15 @@ with run_tab:
                         )
 
             st.success("Crawl erfolgreich abgeschlossen.")
+            json_file_path = (run_result or {}).get("json_file_path")
+            ftp_uploaded = bool((run_result or {}).get("ftp_upload_performed"))
+            if json_file_path:
+                st.info(f"JSON gespeichert: {json_file_path}")
+            if upload_json_to_ftp:
+                if ftp_uploaded:
+                    st.success("JSON wurde auf den FTP-Server übertragen.")
+                else:
+                    st.warning("FTP-Upload war aktiviert, wurde aber nicht ausgeführt.")
             st.session_state["scroll_to_result"] = True
         except MetaTokenExpiredError as exc:
             st.error(str(exc))
