@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $ProjectId = "<your-project-id>" # TODO: Update this to your project ID
 $RuntimeServiceAccount = "adtracker-run-sa@$ProjectId.iam.gserviceaccount.com"
 $Image = "gcr.io/$ProjectId/$ImageName"
-$Secrets = "APP_PASSWORD=APP_PASSWORD:latest,GOOGLE_SHEET_ID=GOOGLE_SHEET_ID:latest,META_ACCESS_TOKEN=META_ACCESS_TOKEN:latest,META_APP_ID=META_APP_ID:latest,META_APP_SECRET=META_APP_SECRET:latest,TIKTOK_ACCESS_TOKEN=TIKTOK_ACCESS_TOKEN:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest"
+$Secrets = "APP_PASSWORD=APP_PASSWORD:latest,GOOGLE_SHEET_ID=GOOGLE_SHEET_ID:latest,META_ACCESS_TOKEN=META_ACCESS_TOKEN:latest,META_APP_ID=META_APP_ID:latest,META_APP_SECRET=META_APP_SECRET:latest,TIKTOK_ACCESS_TOKEN=TIKTOK_ACCESS_TOKEN:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,FTP_HOST=FTP_HOST:latest,FTP_PORT=FTP_PORT:latest,FTP_USERNAME=FTP_USERNAME:latest,FTP_PASSWORD=FTP_PASSWORD:latest,FTP_REMOTE_DIR=FTP_REMOTE_DIR:latest,FTP_USE_TLS=FTP_USE_TLS:latest"
 
 Write-Host "Setting active project to $ProjectId..." -ForegroundColor Cyan
 gcloud config set project $ProjectId | Out-Host

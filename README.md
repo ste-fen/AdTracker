@@ -30,7 +30,9 @@ Before running the script, ensure you have the following:
 3. Install dependencies:
    ```sh
    pip install -r requirements.txt
+   playwright install chromium
    ```
+   The Playwright Chromium browser is required for Meta ad screenshot generation.
 
 4. Set up the `.env` file with your credentials:
    ```sh
@@ -60,7 +62,12 @@ This will:
 In the web app, open the `Meta Token` tab to refresh `META_ACCESS_TOKEN` in the browser.
 You can paste a short-lived user token from the Meta Graph API Explorer and store the new long-lived token in `.env`.
 
-In the `Crawler` tab, you can decide per run whether the next crawl should also upload the generated JSON file to FTP.
+In the `Crawler` tab, you can configure each run before starting it:
+- **Land**: country filter (`AT` or `DE`) applied to Meta, TikTok, and Google queries.
+- **Maximale Ergebnisse je Plattform**: a shared per-search-term result cap (1–5000) applied to all three platforms.
+- **Meta screenshots erstellen**: optionally renders a screenshot of each Meta ad's `ad_snapshot_url` via headless Chromium (Playwright) and offers the results as a downloadable ZIP, capped at N screenshots.
+- **Ergebnisse dieser Suche als JSON auf FTP-Server übertragen**: decide per run whether the generated JSON file should also be uploaded to FTP.
+
 The JSON contains these columns:
 - Meta: `Search Term`, `Ad Creative Bodies`, `Ad Creative Link Captions`, `Ad Snapshot URL`
 - TikTok: `Search Term`, `Video URL`
@@ -124,6 +131,16 @@ echo -n "<TIKTOK_CLIENT_KEY>" | gcloud secrets create TIKTOK_CLIENT_KEY --data-f
 echo -n "<TIKTOK_CLIENT_SECRET>" | gcloud secrets create TIKTOK_CLIENT_SECRET --data-file=-
 ```
 
+Optional, only if you use the FTP JSON upload feature:
+```sh
+echo -n "<FTP_HOST>" | gcloud secrets create FTP_HOST --data-file=-
+echo -n "<FTP_PORT>" | gcloud secrets create FTP_PORT --data-file=-
+echo -n "<FTP_USERNAME>" | gcloud secrets create FTP_USERNAME --data-file=-
+echo -n "<FTP_PASSWORD>" | gcloud secrets create FTP_PASSWORD --data-file=-
+echo -n "<FTP_REMOTE_DIR>" | gcloud secrets create FTP_REMOTE_DIR --data-file=-
+echo -n "<FTP_USE_TLS>" | gcloud secrets create FTP_USE_TLS --data-file=-
+```
+
 If a secret already exists, add a new version:
 ```sh
 echo -n "<NEW_VALUE>" | gcloud secrets versions add <SECRET_NAME> --data-file=-
@@ -158,6 +175,8 @@ gcloud run deploy adtracker \
    --allow-unauthenticated \
    --set-secrets "GOOGLE_SHEET_ID=GOOGLE_SHEET_ID:latest,APP_PASSWORD=APP_PASSWORD:latest,META_ACCESS_TOKEN=META_ACCESS_TOKEN:latest,META_APP_ID=META_APP_ID:latest,META_APP_SECRET=META_APP_SECRET:latest,TIKTOK_ACCESS_TOKEN=TIKTOK_ACCESS_TOKEN:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest"
 ```
+
+Add `,FTP_HOST=FTP_HOST:latest,FTP_PORT=FTP_PORT:latest,FTP_USERNAME=FTP_USERNAME:latest,FTP_PASSWORD=FTP_PASSWORD:latest,FTP_REMOTE_DIR=FTP_REMOTE_DIR:latest,FTP_USE_TLS=FTP_USE_TLS:latest` to `--set-secrets` if you created the optional FTP secrets above.
 
 PowerShell helper script for this project:
 ```powershell
@@ -200,6 +219,7 @@ adtracker/
 │   │── meta_ads.py                   # Meta Ads API queries (with auto token refresh)
 │   │── tiktok_ads.py                 # TikTok Ads API queries
 │   │── google_ads.py                 # Google Ad Library / BigQuery queries
+│   │── screenshot_helper.py          # Meta ad snapshot screenshots via Playwright (Chromium)
 │   └── utils.py                      # Utility functions
 │
 │── .dockerignore                     # Files to exclude from Docker image
