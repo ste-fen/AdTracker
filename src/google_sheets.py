@@ -21,6 +21,18 @@ else:
     client = gspread.authorize(creds)
 RESULT_SHEET_TITLES = ["Results_Meta", "Results_TikTok", "Results_Google"]
 
+# Static Meta headers. The age/country/gender reach breakdown adds country-prefixed
+# columns (e.g. "AT - 25-34 - Male") on top of these at write time; those are reset
+# on every run so an AT run followed by a DE run does not leave stale AT columns.
+META_BASE_HEADERS = [
+    "Timestamp", "Search Term", "Ad ID", "Ad Creation Time", "Ad Creative Bodies",
+    "Ad Creative Link Captions", "Ad Creative Link Descriptions", "Ad Creative Link Titles",
+    "Ad Delivery Start Time", "Ad Delivery Stop Time", "Ad Snapshot URL", "Currency",
+    "Delivery by Region", "Demographic Distribution", "Estimated Audience Size",
+    "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms", "Beneficiary Payers",
+    "Spend", "Target Ages", "Target Gender", "Target Locations"
+]
+
 
 def _runtime_principal_hint():
     runtime_service_account = os.getenv("CLOUD_RUN_SERVICE_ACCOUNT")
@@ -91,6 +103,41 @@ def _free_space_and_append_row(sheet, row):
     _free_space_and_retry_append(sheet, [row])
 
 
+DEFAULT_ROW_HEIGHT_PX = 21
+
+
+def _keep_default_row_height(sheet):
+    """Force every row of the sheet to the default 21px height.
+
+    Long text in a few cells otherwise makes Sheets auto-grow those rows. We also
+    clip (instead of wrap) so the forced height does not hide text mid-line, but
+    the explicit pixelSize is what actually keeps the rows short.
+    """
+    last_col = gspread.utils.rowcol_to_a1(1, sheet.col_count).rstrip("0123456789")
+    try:
+        sheet.format(f"A:{last_col}", {"wrapStrategy": "CLIP"})
+    except APIError as exc:
+        print(f"Could not set wrap strategy on '{sheet.title}': {exc}")
+
+    try:
+        sheet.spreadsheet.batch_update({
+            "requests": [{
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet.id,
+                        "dimension": "ROWS",
+                        "startIndex": 0,
+                        "endIndex": sheet.row_count,
+                    },
+                    "properties": {"pixelSize": DEFAULT_ROW_HEIGHT_PX},
+                    "fields": "pixelSize",
+                }
+            }]
+        })
+    except APIError as exc:
+        print(f"Could not set row height on '{sheet.title}': {exc}")
+
+
 def clear_results_sheets():
     """Clear result worksheets before a run while keeping header rows."""
     spreadsheet = open_spreadsheet()
@@ -103,12 +150,15 @@ def clear_results_sheets():
             continue
 
         values = sheet.get_all_values()
-        if len(values) <= 1:
-            # print(f"Worksheet '{sheet_title}' already empty (header only).")
-            continue
+        if len(values) > 1:
+            sheet.delete_rows(2, len(values))
+            # print(f"Cleared {len(values) - 1} rows from worksheet '{sheet_title}'.")
 
-        sheet.delete_rows(2, len(values))
-        # print(f"Cleared {len(values) - 1} rows from worksheet '{sheet_title}'.")
+        # Drop dynamic country-prefixed breakdown columns so switching between
+        # AT and DE runs does not accumulate stale, empty columns.
+        if sheet_title == "Results_Meta" and sheet.row_values(1):
+            sheet.delete_rows(1)
+            sheet.insert_row(META_BASE_HEADERS, index=1)
 
 def read_search_terms():
     """Read search terms and associated metadata from the Google Sheet."""
@@ -213,12 +263,16 @@ def write_tiktok_results_to_sheet(results, search_term):
             ad.get("image_urls", [])[0] if ad.get("image_urls") else "",
         ]
         _free_space_and_append_row(sheet, row)
+    _keep_default_row_height(sheet)
 
-def write_meta_results_to_sheet(results, search_term):
+def write_meta_results_to_sheet(results, search_term, country_code=None):
     # Check if results is None or empty
     if not results:
         print(f"No results to write for search term '{search_term}'.")
         return
+
+    # Country selected in the UI (AT or DE); default to AT for backwards compatibility
+    country_code = country_code or "AT"
 
     # Check if results contain an error response from Meta API
     if "Meta API error" in results:
@@ -235,15 +289,7 @@ def write_meta_results_to_sheet(results, search_term):
     except gspread.exceptions.WorksheetNotFound:
         sheet = spreadsheet.add_worksheet(title="Results_Meta", rows="1000", cols="50")
         # Write headers only if the sheet is newly created
-        headers = [
-            "Timestamp", "Search Term", "Ad ID", "Ad Creation Time", "Ad Creative Bodies",
-            "Ad Creative Link Captions", "Ad Creative Link Descriptions", "Ad Creative Link Titles",
-            "Ad Delivery Start Time", "Ad Delivery Stop Time", "Ad Snapshot URL", "Currency",
-            "Delivery by Region", "Demographic Distribution", "Estimated Audience Size",
-            "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms", "Beneficiary Payers",
-            "Spend", "Target Ages", "Target Gender", "Target Locations"
-        ]
-        _free_space_and_append_row(sheet, headers)
+        _free_space_and_append_row(sheet, list(META_BASE_HEADERS))
 
     # Prepare rows for batch writing
     rows = []
@@ -254,7 +300,7 @@ def write_meta_results_to_sheet(results, search_term):
     for result in results:
         for breakdown in result.get("age_country_gender_reach_breakdown", []):
             country = breakdown.get("country", "")
-            if country == "AT": # Remove or adapt to see non-AT countries
+            if country == country_code: # Only the country selected in the UI
                 for age_gender in breakdown.get("age_gender_breakdowns", []):
                     age_range = age_gender.get("age_range", "")
                     dynamic_columns.add(f"{country} - {age_range} - Male")
@@ -328,7 +374,7 @@ def write_meta_results_to_sheet(results, search_term):
         dynamic_values = {col: 0 for col in dynamic_columns}
         for breakdown in result.get("age_country_gender_reach_breakdown", []):
             country = breakdown.get("country", "")
-            if country == "AT": # Remove or adapt to see non-AT countries
+            if country == country_code: # Only the country selected in the UI
                 for age_gender in breakdown.get("age_gender_breakdowns", []):
                     age_range = age_gender.get("age_range", "")
                     male = age_gender.get("male", 0)
@@ -344,6 +390,7 @@ def write_meta_results_to_sheet(results, search_term):
 
     # Batch write rows to the sheet
     _free_space_and_retry_append(sheet, rows)
+    _keep_default_row_height(sheet)
 
 def write_google_results_to_sheet(results, search_term):
     # Check if results is None or empty
@@ -426,3 +473,4 @@ def write_google_results_to_sheet(results, search_term):
 
     # Batch write rows to the sheet
     _free_space_and_retry_append(sheet, rows)
+    _keep_default_row_height(sheet)

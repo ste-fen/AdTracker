@@ -212,7 +212,7 @@ def main(
             print(f"{meta_count} Meta results for term '{term}'")
             if meta_count > 0:
                 print(f"Writing Meta results for term '{term}'...")
-                write_meta_results_to_sheet(meta_results, term)
+                write_meta_results_to_sheet(meta_results, term, country_code)
             print("-" * 100)
 
         if fetch_tiktok:
