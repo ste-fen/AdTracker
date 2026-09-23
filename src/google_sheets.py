@@ -66,10 +66,34 @@ def open_spreadsheet():
         ) from exc
 
 
+MAX_CELL_CHARS = 50000  # Google Sheets hard limit per cell
+TRUNCATION_MARKER = " …[truncated]"
+
+
+def _truncate_cells(sheet, rows):
+    """Shorten string cells that exceed the Google Sheets per-cell character limit."""
+    limit = MAX_CELL_CHARS - len(TRUNCATION_MARKER)
+    truncated = 0
+    cleaned = []
+    for row in rows:
+        new_row = []
+        for value in row:
+            if isinstance(value, str) and len(value) > MAX_CELL_CHARS:
+                value = value[:limit] + TRUNCATION_MARKER
+                truncated += 1
+            new_row.append(value)
+        cleaned.append(new_row)
+    if truncated:
+        print(f"Truncated {truncated} cell(s) exceeding {MAX_CELL_CHARS} characters in '{sheet.title}'.")
+    return cleaned
+
+
 def _free_space_and_retry_append(sheet, rows):
     """Append rows and recover from the 10M-cell workbook limit by trimming oldest data rows."""
     if not rows:
         return
+
+    rows = _truncate_cells(sheet, rows)
 
     try:
         sheet.append_rows(rows, value_input_option="RAW")
