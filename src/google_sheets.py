@@ -6,6 +6,12 @@ import requests
 from google.oauth2.service_account import Credentials
 from gspread.exceptions import APIError
 from config import GOOGLE_SHEET_ID, GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE
+from report_classification import (
+    DEFAULT_PROMPTS,
+    PROMPT_DEFINITIONS,
+    classify_google_ad,
+    classify_meta_ad,
+)
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -30,7 +36,40 @@ META_BASE_HEADERS = [
     "Ad Delivery Start Time", "Ad Delivery Stop Time", "Ad Snapshot URL", "Currency",
     "Delivery by Region", "Demographic Distribution", "Estimated Audience Size",
     "EU Total Reach", "Impressions", "Page ID", "Page Name", "Publisher Platforms", "Beneficiary Payers",
-    "Spend", "Target Ages", "Target Gender", "Target Locations"
+    "Spend", "Target Ages", "Target Gender", "Target Locations",
+    # Columns supporting the DSA reporting process on https://officialrequests.meta.com/xreports/
+    "Meldeseite", "Service", "Reporting Reason", "Reporting reasons text", "URL", "Land",
+    "DSA Payer", "Legal Order", "Unlawful Content", "Specific laws"
+]
+
+META_REPORT_PAGE = "https://officialrequests.meta.com/xreports/"
+META_AD_LIBRARY_URL = "https://www.facebook.com/ads/library/?id={ad_id}"
+
+GOOGLE_HEADERS = [
+    "Timestamp", "Search Term", "Advertiser ID", "Creative ID", "Creative Page URL",
+    "Ad Format Type", "Advertiser Disclosed Name", "Advertiser Legal Name",
+    "Advertiser Location", "Advertiser Verification Status", "Region Code",
+    "First Shown", "Last Shown", "Times Shown Start Date", "Times Shown End Date",
+    "Times Shown Lower Bound", "Times Shown Upper Bound", "Demographic Info",
+    "Geo Location", "Contextual Signals", "Customer Lists", "Topics of Interest",
+    # Columns supporting the DSA reporting process on the Google legal troubleshooter
+    "Meldeseite", "Role", "Service", "Inhalte", "Grund der Meldung", "Wohnsitz",
+    "Vollständiger Namen", "Name des Unternehmen", "Kontakt-E-Mail", "Format",
+    "Anzeigen-URL", "Begründung", "Sachverhalt", "Unterschrift"
+]
+
+# Fixed values for the Google reporting columns "Meldeseite" .. "Format".
+GOOGLE_REPORT_DEFAULTS = [
+    "https://support.google.com/legal/troubleshooter/13966113",  # Meldeseite
+    "Trusted Flagger",  # Role
+    "Anzeige auf Online-Plattformen",  # Service
+    "Inhalte in Google Ads melden",  # Inhalte
+    "Sonstiges",  # Grund der Meldung
+    "Österreich",  # Wohnsitz
+    "NN",  # Vollständiger Namen
+    "Österreichisches Institut für angewandte Telekommunikation",  # Name des Unternehmen
+    "dsa@oiat.at",  # Kontakt-E-Mail
+    "Sichtbare URL",  # Format
 ]
 
 
@@ -127,6 +166,15 @@ def _free_space_and_append_row(sheet, row):
     _free_space_and_retry_append(sheet, [row])
 
 
+def _replace_header_row(sheet, headers):
+    """Replace row 1 with headers, widening the grid first so no column is cut off."""
+    if sheet.col_count < len(headers):
+        sheet.add_cols(len(headers) - sheet.col_count)
+    # Overwrite in place: deleting row 1 fails when it is the sheet's only row.
+    sheet.batch_clear(["1:1"])
+    sheet.update(range_name="A1", values=[headers])
+
+
 DEFAULT_ROW_HEIGHT_PX = 21
 
 
@@ -180,9 +228,50 @@ def clear_results_sheets():
 
         # Drop dynamic country-prefixed breakdown columns so switching between
         # AT and DE runs does not accumulate stale, empty columns.
-        if sheet_title == "Results_Meta" and sheet.row_values(1):
-            sheet.delete_rows(1)
-            sheet.insert_row(META_BASE_HEADERS, index=1)
+        if sheet_title == "Results_Meta":
+            _replace_header_row(sheet, META_BASE_HEADERS)
+        # Keep existing Google sheets in sync with the current column layout.
+        elif sheet_title == "Results_Google":
+            _replace_header_row(sheet, GOOGLE_HEADERS)
+
+PROMPTS_SHEET_TITLE = "Prompts"
+PROMPTS_HEADERS = ["Key", "Spalte", "Prompt"]
+
+
+def read_prompts():
+    """Read the AIT/LLM prompt templates from the "Prompts" worksheet.
+
+    Prompts missing or empty in the sheet fall back to DEFAULT_PROMPTS.
+    """
+    prompts = dict(DEFAULT_PROMPTS)
+    try:
+        sheet = open_spreadsheet().worksheet(PROMPTS_SHEET_TITLE)
+    except gspread.exceptions.WorksheetNotFound:
+        return prompts
+
+    for row in sheet.get_all_values()[1:]:  # Skip the header row
+        if len(row) >= 3 and row[0] in prompts and row[2].strip():
+            prompts[row[0]] = row[2]
+    return prompts
+
+
+def save_prompts(prompts):
+    """Write the AIT/LLM prompt templates to the "Prompts" worksheet."""
+    spreadsheet = open_spreadsheet()
+    try:
+        sheet = spreadsheet.worksheet(PROMPTS_SHEET_TITLE)
+    except gspread.exceptions.WorksheetNotFound:
+        sheet = spreadsheet.add_worksheet(
+            title=PROMPTS_SHEET_TITLE, rows=str(len(PROMPT_DEFINITIONS) + 1), cols=str(len(PROMPTS_HEADERS))
+        )
+
+    rows = [PROMPTS_HEADERS] + [
+        [key, column, prompts.get(key, DEFAULT_PROMPTS[key])]
+        for key, (_, column) in PROMPT_DEFINITIONS.items()
+    ]
+    sheet.clear()
+    sheet.update(range_name="A1", values=_truncate_cells(sheet, rows))
+
 
 def read_search_terms():
     """Read search terms and associated metadata from the Google Sheet."""
@@ -318,6 +407,7 @@ def write_meta_results_to_sheet(results, search_term, country_code=None):
     # Prepare rows for batch writing
     rows = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    prompts = read_prompts()
 
     # Collect all unique age_range and gender combinations for dynamic columns
     dynamic_columns = set()
@@ -338,8 +428,7 @@ def write_meta_results_to_sheet(results, search_term, country_code=None):
     existing_headers = sheet.row_values(1)
     new_headers = existing_headers + [col for col in dynamic_columns if col not in existing_headers]
     if len(new_headers) > len(existing_headers):
-        sheet.delete_rows(1)  # Remove the old header row
-        sheet.insert_row(new_headers, index=1)  # Insert the updated header row
+        _replace_header_row(sheet, new_headers)
 
     for result in results:
         # Extract fields from the result
@@ -383,6 +472,7 @@ def write_meta_results_to_sheet(results, search_term, country_code=None):
         target_locations = "\n".join(
             [f"{loc.get('name', '')} (Excluded: {loc.get('excluded', False)})" for loc in result.get("target_locations", [])]
         )
+        classification = classify_meta_ad(result, prompts, search_term, country_code)
 
         # Prepare the base row
         row = [
@@ -391,7 +481,18 @@ def write_meta_results_to_sheet(results, search_term, country_code=None):
             ad_delivery_start_time, ad_delivery_stop_time, ad_snapshot_url, currency,
             delivery_by_region, demographic_distribution, estimated_audience_size_str,
             eu_total_reach, impressions_str, page_id, page_name, publisher_platforms, beneficiary_payers,
-            spend_str, target_ages, target_gender, target_locations
+            spend_str, target_ages, target_gender, target_locations,
+            # Reporting columns
+            META_REPORT_PAGE,  # Meldeseite
+            "Facebook Core",  # Service
+            classification["reporting_reason"],  # Reporting Reason (AIT/LLM)
+            classification["reporting_reasons_text"],  # Reporting reasons text (AIT/LLM)
+            META_AD_LIBRARY_URL.format(ad_id=ad_id),  # URL
+            country_code,  # Land
+            "Ja",  # DSA Payer
+            "Nein",  # Legal Order
+            "Ja",  # Unlawful Content
+            classification["specific_laws"],  # Specific laws (AIT/LLM)
         ]
 
         # Add dynamic columns for age_range and gender combinations
@@ -429,22 +530,15 @@ def write_google_results_to_sheet(results, search_term):
     try:
         sheet = spreadsheet.worksheet("Results_Google")
     except gspread.exceptions.WorksheetNotFound:
-        sheet = spreadsheet.add_worksheet(title="Results_Google", rows="1000", cols="26")
+        sheet = spreadsheet.add_worksheet(title="Results_Google", rows="1000", cols=str(len(GOOGLE_HEADERS)))
         # Write headers only if the sheet is newly created
-        headers = [
-            "Timestamp", "Search Term", "Advertiser ID", "Creative ID", "Creative Page URL",
-            "Ad Format Type", "Advertiser Disclosed Name", "Advertiser Legal Name",
-            "Advertiser Location", "Advertiser Verification Status", "Region Code",
-            "First Shown", "Last Shown", "Times Shown Start Date", "Times Shown End Date",
-            "Times Shown Lower Bound", "Times Shown Upper Bound", "Demographic Info",
-            "Geo Location", "Contextual Signals", "Customer Lists", "Topics of Interest"
-        ]
-        _free_space_and_append_row(sheet, headers)
+        _free_space_and_append_row(sheet, list(GOOGLE_HEADERS))
 
     # Prepare rows for batch writing
     rows = []
     results_rows = [dict(row) for row in results]
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    prompts = read_prompts()
     for result in results_rows:
         # Extract fields using integer indices
         advertiser_id = result.get('advertiser_id')
@@ -467,6 +561,7 @@ def write_google_results_to_sheet(results, search_term):
         contextual_signals = result.get('contextual_signals')
         customer_lists = result.get('customer_lists')
         topics_of_interest = result.get('topics_of_interest')
+        classification = classify_google_ad(result, prompts, search_term)
 
         # Prepare the row
         row = [
@@ -491,7 +586,13 @@ def write_google_results_to_sheet(results, search_term):
             geo_location,
             contextual_signals,
             customer_lists,
-            topics_of_interest
+            topics_of_interest,
+            # Reporting columns
+            *GOOGLE_REPORT_DEFAULTS,  # Meldeseite .. Format
+            creative_page_url,  # Anzeigen-URL
+            classification["begruendung"],  # Begründung (AIT/LLM)
+            classification["sachverhalt"],  # Sachverhalt (AIT/LLM)
+            "",  # Unterschrift
         ]
         rows.append(row)
 

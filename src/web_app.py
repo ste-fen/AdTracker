@@ -14,8 +14,15 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 import streamlit.components.v1 as components
 
+from google_sheets import read_prompts, save_prompts
 from main import main
 from meta_ads import MetaTokenExpiredError, refresh_meta_access_token
+from report_classification import (
+    DEFAULT_PROMPTS,
+    GOOGLE_PLACEHOLDERS,
+    META_PLACEHOLDERS,
+    PROMPT_DEFINITIONS,
+)
 from screenshot_helper import generate_meta_screenshot_archive
 
 
@@ -272,7 +279,7 @@ if st.button("Logout"):
     _clear_auth_query_param()
     st.rerun()
 
-run_tab, token_tab = st.tabs(["Crawler", "Meta Token"])
+run_tab, prompts_tab, token_tab = st.tabs(["Crawler", "Prompts", "Meta Token"])
 
 with run_tab:
     st.subheader("Crawler")
@@ -416,6 +423,67 @@ with run_tab:
         _trigger_ui_scroll(ui_scroll_placeholder)
         st.session_state["scroll_to_result"] = False
         st.session_state["scroll_to_zip_download"] = False
+
+def _prompt_state_key(prompt_key):
+    return f"prompt_{prompt_key}"
+
+
+def _load_prompts_into_state(prompts):
+    for prompt_key in PROMPT_DEFINITIONS:
+        st.session_state[_prompt_state_key(prompt_key)] = prompts[prompt_key]
+
+
+def _render_placeholder_help(placeholders):
+    st.caption(
+        "Verfügbare Platzhalter: "
+        + ", ".join(f"`{{{name}}}` ({label})" for name, label in placeholders.items())
+    )
+
+
+with prompts_tab:
+    st.subheader("Prompts für Meldespalten")
+    st.write(
+        "Diese Prompts werden pro Anzeige an AIT bzw. das LLM geschickt, um die Meldespalten zu befüllen. "
+        "Sie werden im Worksheet 'Prompts' des Google Sheets gespeichert und beim nächsten Crawl verwendet."
+    )
+
+    if not st.session_state.get("prompts_loaded"):
+        try:
+            _load_prompts_into_state(read_prompts())
+            st.session_state["prompts_loaded"] = True
+        except Exception as exc:
+            st.error(f"Prompts konnten nicht geladen werden, Standardwerte werden angezeigt: {exc}")
+            _load_prompts_into_state(DEFAULT_PROMPTS)
+
+    for platform, title, placeholders in (
+        ("meta", "Meta", META_PLACEHOLDERS),
+        ("google", "Google", GOOGLE_PLACEHOLDERS),
+    ):
+        st.markdown(f"#### {title}")
+        _render_placeholder_help(placeholders)
+        for prompt_key, (prompt_platform, column) in PROMPT_DEFINITIONS.items():
+            if prompt_platform == platform:
+                st.text_area(column, key=_prompt_state_key(prompt_key), height=260)
+
+    save_col, reset_col, reload_col = st.columns(3)
+    with save_col:
+        if st.button("Prompts speichern", type="primary"):
+            try:
+                save_prompts({
+                    prompt_key: st.session_state[_prompt_state_key(prompt_key)]
+                    for prompt_key in PROMPT_DEFINITIONS
+                })
+                st.success("Prompts wurden gespeichert.")
+            except Exception as exc:
+                st.error(f"Prompts konnten nicht gespeichert werden: {exc}")
+    with reset_col:
+        if st.button("Auf Standard zurücksetzen", help="Setzt die Eingabefelder zurück; erst 'Prompts speichern' übernimmt sie."):
+            _load_prompts_into_state(DEFAULT_PROMPTS)
+            st.rerun()
+    with reload_col:
+        if st.button("Aus Sheet neu laden"):
+            st.session_state["prompts_loaded"] = False
+            st.rerun()
 
 with token_tab:
     st.subheader("Meta Token Refresh")
